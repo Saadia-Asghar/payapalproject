@@ -18,7 +18,9 @@ payment to a verifiable **Purchase Passport** for disputes.
 | 1 Purchase Permission Form | Form → review (plain-English summary + terms fingerprint + 3 consents) → signed immutable version → receipt; versioning; revoke; expiry | ✅ |
 | P0 PayPal sandbox proof | Real Orders v2 create → buyer approval → capture | ⏳ needs sandbox credentials |
 | 2 Catalog + policy engine | Agent picks → server-built cart → ALLOW/REVIEW/BLOCK with "what you allowed vs. what AI selected" → buyer approves the exact cart (rejected if price changed) | ✅ |
-| 3–5 | PayPal checkout, Purchase Passport, merchant disputes | ⏳ see [docs/PHASES.md](docs/PHASES.md) |
+| 3 PayPal checkout | Database side done; PayPal adapter in progress by teammate — [docs/PAYPAL_INTEGRATION.md](docs/PAYPAL_INTEGRATION.md) | 🔶 |
+| 4 Purchase Passport | Signed proof bundle on verified capture, owner page + JSON download, public redacted `/verify`, paste-a-bundle tamper check | ✅ |
+| 5 Merchant workspace | Store-scoped cart checks, SAMPLE disputes with grounded evidence packets (provided vs missing), reviewer step, JSON export | ✅ |
 
 Nothing in this repo simulates a payment. Until Phase 3 lands there is **no** PayPal call at all, and the UI says so.
 

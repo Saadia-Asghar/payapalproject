@@ -9,6 +9,7 @@ import { formatDeadline } from "@/lib/permissions/summary";
 import { getSessionUser } from "@/server/auth/session";
 import { getDb } from "@/server/db/client";
 import { getAttemptDetail } from "@/server/services/carts";
+import { getPaymentForAttempt } from "@/server/services/payments";
 import { ServiceError } from "@/server/services/permissions";
 
 function Check({ ok, label }: { ok: boolean; label: string }) {
@@ -24,11 +25,13 @@ async function CartCheck({ params }: { params: Promise<{ id: string; attemptId: 
   const { id, attemptId } = await params;
   const session = await getSessionUser();
   if (!session) redirect(`/login?next=/permissions/${id}/carts/${attemptId}`);
-  const d = await getAttemptDetail(await getDb(), session.user.id, attemptId).catch((e) => {
+  const db = await getDb();
+  const d = await getAttemptDetail(db, session.user.id, attemptId).catch((e) => {
     if (e instanceof ServiceError && e.code === "NOT_FOUND") notFound();
     throw e;
   });
   if (d.permissionId !== id) notFound();
+  const payment = await getPaymentForAttempt(db, attemptId);
 
   const { attempt: a, cart, terms, rules } = d;
   const style = VERDICT_STYLE[a.verdict];
@@ -110,10 +113,21 @@ async function CartCheck({ params }: { params: Promise<{ id: string; attemptId: 
             <p className="text-sm font-semibold text-emerald-800">
               You approved this exact cart on {formatDeadline(approvedAt, terms.display_timezone)}.
             </p>
-            <button type="button" className={btn.primary} disabled title="PayPal sandbox checkout is built in Phase 3">
-              Continue to PayPal
-            </button>
-            <p className="text-xs text-[var(--muted)]">PayPal sandbox checkout arrives in Phase 3. No payment has been taken.</p>
+            {payment?.passport_id ? (
+              <Link href={`/passports/${payment.passport_id}`} className={btn.primary}>
+                View Purchase Passport {payment.passport_id}
+              </Link>
+            ) : (
+              <>
+                {/* Phase 3 (PayPal adapter) replaces this button; see docs/PAYPAL_INTEGRATION.md */}
+                <button type="button" className={btn.primary} disabled title="PayPal sandbox checkout is being integrated (Phase 3)">
+                  Continue to PayPal
+                </button>
+                <p className="text-xs text-[var(--muted)]">
+                  {payment ? `Checkout ${payment.reconciliation_key}: ${payment.status}.` : "PayPal sandbox checkout is being integrated."} No payment has been taken.
+                </p>
+              </>
+            )}
           </div>
         )}
         {canApprove && (

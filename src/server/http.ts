@@ -35,6 +35,7 @@ export function api<Ctx>(fn: (req: Request, ctx: Ctx) => Promise<unknown>) {
     try {
       if (req.method !== "GET" && req.method !== "HEAD") assertSameOrigin(req);
       const body = await fn(req, ctx);
+      if (body instanceof Response) return body;
       return Response.json(body ?? { ok: true }, { headers: { "Cache-Control": "no-store" } });
     } catch (err) {
       if (err instanceof ServiceError) {

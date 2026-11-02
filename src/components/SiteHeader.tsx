@@ -5,18 +5,33 @@ import { SignOutButton } from "./SignOutButton";
 
 async function Account() {
   const s = await getSessionUser();
+  const verify = (
+    <Link href="/verify" className="font-medium text-[var(--ink)] hover:text-[var(--accent)]">
+      Verify
+    </Link>
+  );
   if (!s) {
     return (
-      <Link href="/login" className="text-sm font-semibold text-[var(--accent)] hover:underline">
-        Sign in
-      </Link>
+      <div className="flex items-center gap-4 text-sm">
+        {verify}
+        <Link href="/login" className="font-semibold text-[var(--accent)] hover:underline">
+          Sign in
+        </Link>
+      </div>
     );
   }
   return (
     <div className="flex items-center gap-4 text-sm">
-      <Link href="/permissions" className="font-medium text-[var(--ink)] hover:text-[var(--accent)]">
-        My permissions
-      </Link>
+      {s.user.role === "MERCHANT" ? (
+        <Link href="/merchant" className="font-medium text-[var(--ink)] hover:text-[var(--accent)]">
+          Merchant workspace
+        </Link>
+      ) : (
+        <Link href="/permissions" className="font-medium text-[var(--ink)] hover:text-[var(--accent)]">
+          My permissions
+        </Link>
+      )}
+      {verify}
       <span className="hidden text-[var(--muted)] sm:inline">{s.user.display_name}</span>
       <SignOutButton />
     </div>

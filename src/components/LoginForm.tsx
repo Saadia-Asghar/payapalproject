@@ -16,10 +16,11 @@ export function LoginForm() {
     setBusy(true);
     setError(null);
     try {
-      await apiCall("/api/auth/login", "POST", { email: form.get("email"), password: form.get("password") });
+      const res = await apiCall<{ role: string }>("/api/auth/login", "POST", { email: form.get("email"), password: form.get("password") });
       const next = params.get("next");
       // Only same-site relative paths, never an open redirect.
-      router.push(next && next.startsWith("/") && !next.startsWith("//") ? next : "/permissions");
+      const { role } = res;
+      router.push(next && next.startsWith("/") && !next.startsWith("//") ? next : role === "MERCHANT" ? "/merchant" : "/permissions");
       router.refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not sign in.");
