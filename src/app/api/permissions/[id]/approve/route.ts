@@ -3,7 +3,7 @@ import { getDb } from "@/server/db/client";
 import { api, readJson, requireUser } from "@/server/http";
 import { approvePermission, ServiceError } from "@/server/services/permissions";
 
-const body = z.object({
+const body = z.strictObject({
   terms_hash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   consents: z.object({
     checked_terms: z.boolean().optional(),

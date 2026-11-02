@@ -38,11 +38,12 @@ export function PermissionActions({ permissionId, policyId, canRevoke, canEdit }
             {busy ? "Revoking…" : "Revoke"}
           </button>
         )}
-        <button type="button" className={btn.primary} disabled title="Agent shopping is built in Phase 2">
-          Start shopping
-        </button>
+        {canRevoke && (
+          <Link href={`/permissions/${permissionId}/shop`} className={btn.primary}>
+            Start shopping
+          </Link>
+        )}
       </div>
-      <p className="mt-2 text-xs text-[var(--muted)]">Start shopping unlocks when the catalog and policy engine land (Phase 2).</p>
       {error && (
         <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}

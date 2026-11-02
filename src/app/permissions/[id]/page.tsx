@@ -9,6 +9,8 @@ import { formatDeadline, formatMoney } from "@/lib/permissions/summary";
 import { getSessionUser } from "@/server/auth/session";
 import { getDb } from "@/server/db/client";
 import { getPermissionDetail, listMerchants, ServiceError } from "@/server/services/permissions";
+import { listAttempts } from "@/server/services/carts";
+import { VerdictBadge } from "@/components/verdict";
 
 const headline: Record<string, string> = {
   ACTIVE: "Permission active",
@@ -42,6 +44,7 @@ async function Receipt({ params, searchParams }: { params: Promise<{ id: string 
   if (!active) redirect(`/permissions/${id}/edit`);
 
   const merchants = Object.fromEntries((await listMerchants(db)).map((m) => [m.id, m.display_name]));
+  const attempts = await listAttempts(db, session.user.id, p.id);
   const t = active.terms;
   const tz = t.display_timezone;
   const intact = active.integrity.termsIntact && active.integrity.signatureValid;
@@ -103,6 +106,29 @@ async function Receipt({ params, searchParams }: { params: Promise<{ id: string 
           </p>
         )}
       </div>
+
+      {attempts.length > 0 && (
+        <section className={card}>
+          <h2 className="text-base font-semibold">Shopping attempts</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">Every cart checked under this permission, including blocked ones, is kept as a signed record.</p>
+          <ul className="mt-4 divide-y divide-[var(--line)] text-sm">
+            {attempts.map((a) => (
+              <li key={a.id}>
+                <Link href={`/permissions/${p.id}/carts/${a.id}`} className="flex flex-wrap items-center justify-between gap-2 py-2.5 hover:text-[var(--accent)]">
+                  <span className="flex items-center gap-3">
+                    <VerdictBadge verdict={a.verdict} />
+                    <span>{a.title}</span>
+                    {a.buyer_cart_approved_at && <span className="text-xs font-semibold text-emerald-700">cart approved</span>}
+                  </span>
+                  <span className="text-xs text-[var(--muted)]">
+                    v{a.version} · ${a.total} · {formatDeadline(iso(a.created_at), tz)}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section id="full-permission" className={card}>
         <h2 className="text-base font-semibold">Full permission · version {active.version}</h2>

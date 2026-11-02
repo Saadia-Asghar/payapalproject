@@ -17,7 +17,8 @@ payment to a verifiable **Purchase Passport** for disputes.
 | 0 Foundation | Next.js 16 + TS, Postgres/PGlite, migrations, sessions, Ed25519 signing, hash-chained audit log | ✅ |
 | 1 Purchase Permission Form | Form → review (plain-English summary + terms fingerprint + 3 consents) → signed immutable version → receipt; versioning; revoke; expiry | ✅ |
 | P0 PayPal sandbox proof | Real Orders v2 create → buyer approval → capture | ⏳ needs sandbox credentials |
-| 2–5 | Policy engine, PayPal checkout, Purchase Passport, merchant disputes | ⏳ see [docs/PHASES.md](docs/PHASES.md) |
+| 2 Catalog + policy engine | Agent picks → server-built cart → ALLOW/REVIEW/BLOCK with "what you allowed vs. what AI selected" → buyer approves the exact cart (rejected if price changed) | ✅ |
+| 3–5 | PayPal checkout, Purchase Passport, merchant disputes | ⏳ see [docs/PHASES.md](docs/PHASES.md) |
 
 Nothing in this repo simulates a payment. Until Phase 3 lands there is **no** PayPal call at all, and the UI says so.
 

@@ -66,12 +66,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const MAX_DRAFT_BYTES = 16_384;
 
 export async function listMerchants(q: Queryable) {
-  return q.query<{ id: string; display_name: string }>("SELECT id, display_name FROM merchants ORDER BY display_name");
+  return q.query<{ id: string; display_name: string }>("SELECT id, display_name FROM merchants WHERE verified ORDER BY display_name");
 }
 
 async function merchantNameMap(q: Queryable, ids: string[]): Promise<Record<string, string>> {
   const rows = await q.query<{ id: string; display_name: string }>(
-    "SELECT id, display_name FROM merchants WHERE id = ANY($1::text[])",
+    "SELECT id, display_name FROM merchants WHERE verified AND id = ANY($1::text[])",
     [ids],
   );
   return Object.fromEntries(rows.map((r) => [r.id, r.display_name]));
