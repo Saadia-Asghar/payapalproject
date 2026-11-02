@@ -86,6 +86,10 @@ export function getDb(): Promise<Db> {
     globalForDb.cwDb = (async () => {
       const url = process.env.DATABASE_URL;
       if (url) return postgresDb(url);
+      // Serverless hosts have no persistent disk: an embedded DB there would silently lose evidence.
+      if (process.env.NODE_ENV === "production" && process.env.CW_ALLOW_EMBEDDED_DB !== "1") {
+        throw new Error("DATABASE_URL is required in production (set CW_ALLOW_EMBEDDED_DB=1 only for a local `next start` demo).");
+      }
       const dir = path.join(process.cwd(), ".data", "pglite");
       mkdirSync(dir, { recursive: true });
       const db = pgliteDb(new PGlite(dir));

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { OpenSampleDisputeForm } from "@/components/DisputeForms";
-import { badge, card } from "@/components/ui";
+import { badge, btn, card } from "@/components/ui";
 import { VerdictBadge } from "@/components/verdict";
 import { getSessionUser } from "@/server/auth/session";
 import { getDb } from "@/server/db/client";
@@ -23,6 +23,9 @@ async function Workspace() {
       <div>
         <p className="text-xs font-bold uppercase tracking-wider text-[var(--accent)]">Merchant workspace · {session.user.display_name}</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Agent purchases checked against buyer permissions</h1>
+        <Link href="/merchant/catalog" className={`${btn.secondary} mt-3`}>
+          Edit catalog prices &amp; stock
+        </Link>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">

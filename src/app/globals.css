@@ -18,6 +18,22 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Evidence packets print cleanly (browser "Save as PDF"). */
+@media print {
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  section {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+}
+
 body {
   background: var(--surface);
   color: var(--ink);

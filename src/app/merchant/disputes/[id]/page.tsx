@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { ReviewDisputeForm } from "@/components/DisputeForms";
+import { PrintButton } from "@/components/PrintButton";
 import { btn, card } from "@/components/ui";
 import { getSessionUser } from "@/server/auth/session";
 import { getDb } from "@/server/db/client";
@@ -114,7 +115,8 @@ async function Case({ params }: { params: Promise<{ id: string }> }) {
             <ReviewDisputeForm caseId={d.id} />
           </div>
         )}
-        <div className="mt-5 flex flex-wrap gap-3">
+        <div className="no-print mt-5 flex flex-wrap gap-3">
+          <PrintButton label="Print / save as PDF" />
           <a href={`/api/disputes/${d.id}/packet`} className={btn.secondary}>
             Export packet (JSON)
           </a>

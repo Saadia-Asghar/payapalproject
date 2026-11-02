@@ -74,6 +74,8 @@ All documented in [.env.example](.env.example). **Never commit `.env.local` or r
 3. `npm run db:migrate` and `npm run db:seed` with those env vars set.
 4. Deploy with the same env vars.
 
+Full guide with smoke-test checklist: [docs/DEPLOY.md](docs/DEPLOY.md). Production refuses to run without `DATABASE_URL`.
+
 ## Branches
 
 - `dev` — active development; every commit passes typecheck, lint, tests and build (CI enforces this).
