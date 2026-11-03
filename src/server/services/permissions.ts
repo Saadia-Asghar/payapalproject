@@ -16,18 +16,10 @@ import { appendEvidence } from "../audit.ts";
 import { canonicalHash, sha256Hex } from "../crypto/hash.ts";
 import { getSigningKey, signRecord, verifyRecord, SIGNING_DOMAINS, type SigningKey } from "../crypto/signing.ts";
 import type { Db, Queryable } from "../db/client.ts";
+import { ServiceError } from "../errors.ts";
+import { hasPasskey, verifyApproval, verifyPasskeyProof, type PasskeyApprovalInput } from "../auth/webauthn.ts";
 
-export class ServiceError extends Error {
-  code: string;
-  status: number;
-  details?: unknown;
-  constructor(code: string, status: number, message: string, details?: unknown) {
-    super(message);
-    this.code = code;
-    this.status = status;
-    this.details = details;
-  }
-}
+export { ServiceError };
 
 export type PermissionStatus = "DRAFT" | "ACTIVE" | "REVOKED" | "CONSUMED";
 export type EffectiveStatus = PermissionStatus | "EXPIRED";
@@ -212,6 +204,8 @@ export interface ApproveInput {
   termsHash: string;
   consents: Partial<Record<ConsentKey, boolean>>;
   userAgent?: string | null;
+  /** WebAuthn assertion over this exact version; required once the account has a passkey. */
+  passkey?: PasskeyApprovalInput;
   now?: Date;
   signingKey?: SigningKey;
 }
@@ -240,9 +234,17 @@ export async function approvePermission(db: Db, input: ApproveInput) {
       throw new ServiceError("TERMS_CHANGED", 409, "The terms changed after you reviewed them. Please review the latest version again.");
     }
 
+    // Buyer-bound approval: the passkey signs a challenge derived from this exact policy version and terms hash.
+    // Once an account has a passkey it cannot fall back to the weaker session-only approval.
+    const binding = { purpose: "PERMISSION_APPROVAL", policy_id: prepared.policyId, version: prepared.version, terms_hash: prepared.termsHash } as const;
+    const passkey = input.passkey ? await verifyApproval(q, input.userId, binding, input.passkey) : null;
+    if (!passkey && (await hasPasskey(q, input.userId))) {
+      throw new ServiceError("PASSKEY_REQUIRED", 409, "This account has a passkey. Please approve with your passkey.");
+    }
+
     const approvedAt = now.toISOString();
     const evidence = {
-      auth_method: "PASSWORD_SESSION",
+      auth_method: passkey ? "PASSKEY" : "SESSION",
       session_ref: sha256Hex(input.sessionId).slice(0, 16),
       user_agent_sha256: input.userAgent ? sha256Hex(input.userAgent) : null,
       consents: CONSENT_KEYS.map((k) => ({ key: k, text: CONSENT_STATEMENTS[k], accepted: true })),
@@ -258,7 +260,8 @@ export async function approvePermission(db: Db, input: ApproveInput) {
       approved_by: input.userId,
       approved_at: approvedAt,
       evidence,
-      assurance: "APPLICATION_SIGNED",
+      assurance: passkey ? "PASSKEY_VERIFIED" : "APPLICATION_SIGNED",
+      ...(passkey ? { passkey } : {}),
     };
     const { signature, keyId } = signRecord(SIGNING_DOMAINS.permissionApproval, record, key);
     await q.query("INSERT INTO signing_keys (key_id, public_key_pem) VALUES ($1, $2) ON CONFLICT (key_id) DO NOTHING", [
@@ -285,10 +288,17 @@ export async function approvePermission(db: Db, input: ApproveInput) {
       subjectId: prepared.policyId,
       eventType: "PERMISSION_APPROVED",
       actorId: input.userId,
-      payload: { version: prepared.version, terms_hash: prepared.termsHash, signature_key_id: keyId, approved_at: approvedAt },
+      payload: {
+        version: prepared.version,
+        terms_hash: prepared.termsHash,
+        signature_key_id: keyId,
+        approved_at: approvedAt,
+        assurance: record.assurance,
+        passkey_credential_id: passkey?.credential_id ?? null,
+      },
       at: now,
     });
-    return { policyId: prepared.policyId, version: version.version, termsHash: version.terms_hash, approvedAt };
+    return { policyId: prepared.policyId, version: version.version, termsHash: version.terms_hash, approvedAt, assurance: record.assurance };
   });
 }
 
@@ -371,12 +381,23 @@ export async function getPermissionDetail(q: Queryable, userId: string, permissi
       WHERE v.permission_id = $1 ORDER BY v.version DESC`,
     [p.id],
   );
-  const checked = versions.map((v) => {
-    const record = JSON.parse(v.approval_record) as { terms_hash: string };
-    const termsIntact = canonicalHash(JSON.parse(v.canonical_json)) === v.terms_hash && record.terms_hash === v.terms_hash;
-    const signatureValid = !!v.public_key_pem && verifyRecord(SIGNING_DOMAINS.permissionApproval, record, v.signature, v.public_key_pem);
-    return { ...v, terms: JSON.parse(v.canonical_json) as ApprovedTerms, integrity: { termsIntact, signatureValid } };
-  });
+  const checked = await Promise.all(
+    versions.map(async (v) => {
+      const record = JSON.parse(v.approval_record) as { terms_hash: string; assurance?: string; passkey?: unknown };
+      const termsIntact = canonicalHash(JSON.parse(v.canonical_json)) === v.terms_hash && record.terms_hash === v.terms_hash;
+      const signatureValid = !!v.public_key_pem && verifyRecord(SIGNING_DOMAINS.permissionApproval, record, v.signature, v.public_key_pem);
+      // null = approved without a passkey (application-signed only).
+      const passkeyValid = record.passkey
+        ? await verifyPasskeyProof(record.passkey, { purpose: "PERMISSION_APPROVAL", policy_id: p.public_id, version: v.version, terms_hash: v.terms_hash })
+        : null;
+      return {
+        ...v,
+        terms: JSON.parse(v.canonical_json) as ApprovedTerms,
+        assurance: record.assurance ?? "APPLICATION_SIGNED",
+        integrity: { termsIntact, signatureValid, passkeyValid },
+      };
+    }),
+  );
   const active = checked.find((v) => v.version === p.active_version);
   return { permission: p, effectiveStatus: effectiveStatus(p, active, now), active, versions: checked };
 }

@@ -1,4 +1,5 @@
-// Demo accounts used by `npm run db:seed` and `npm run setup`.
+// Demo accounts used by `npm run db:seed` and `npm run setup`, and one-click demo buyers for judges.
+import { randomBytes } from "node:crypto";
 import { hashPassword } from "./auth/password.ts";
 import type { Db } from "./db/client.ts";
 
@@ -20,4 +21,26 @@ export async function seedDemoAccounts(db: Db, password: string) {
   await db.query("UPDATE merchants SET owner_user_id = (SELECT id FROM users WHERE email = $1) WHERE id = 'DEMO-SNEAKER-STORE'", [
     "merchant@demo.cartwitness.test",
   ]);
+}
+
+/**
+ * A fresh, private, passwordless buyer for "Try the demo", so judges never see each other's data.
+ * They can add a passkey and sign back in with it; otherwise the account ends with the session.
+ */
+export async function createDemoBuyer(db: Db) {
+  const tag = randomBytes(4).toString("hex");
+  const [user] = await db.query<{ id: string; email: string }>(
+    "INSERT INTO users (email, display_name, role, is_demo) VALUES ($1, $2, 'BUYER', true) RETURNING id, email",
+    [`demo-buyer-${tag}@demo.cartwitness.test`, `Demo buyer ${tag.toUpperCase()}`],
+  );
+  return user;
+}
+
+/** The shared demo merchant (created without a password if the seed has not run). */
+export async function ensureDemoMerchant(db: Db) {
+  const m = DEMO_USERS[1];
+  await db.query("INSERT INTO users (email, display_name, role) VALUES ($1, $2, $3) ON CONFLICT (email) DO NOTHING", [m.email, m.display_name, m.role]);
+  await db.query("UPDATE merchants SET owner_user_id = (SELECT id FROM users WHERE email = $1) WHERE id = 'DEMO-SNEAKER-STORE'", [m.email]);
+  const [user] = await db.query<{ id: string }>("SELECT id FROM users WHERE email = $1", [m.email]);
+  return user.id;
 }

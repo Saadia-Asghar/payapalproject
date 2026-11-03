@@ -106,8 +106,20 @@ This matches RFC 8785 (JCS) for the value shapes CartWitness produces.
 Approval records are signed with Ed25519 over a domain-separated message
 `"cartwitness/permission-approval/v1\n" + canonicalJson(record)`. Public keys are exposed at
 `GET /api/keys`. This is an **application signature**: it proves the record has not changed
-since CartWitness signed it — not that a specific human personally saw the terms. The
-WebAuthn upgrade (stretch) binds a passkey assertion to `policy_id + version + terms_hash`.
+since CartWitness signed it — not that a specific human personally saw the terms.
+
+### Passkey (WebAuthn) approvals — buyer-bound
+`src/server/auth/webauthn.ts`. For an approval the WebAuthn challenge is
+`base64url(SHA-256(canonicalJson({domain: "cartwitness/passkey-approval/v1", purpose, ..., nonce})))`, where
+`...` is `policy_id, version, terms_hash` (permission) or `cart_attempt_id, cart_hash` (cart). The challenge is
+stored single-use (5 min) in `webauthn_challenges`. On approve the server re-derives the expected binding
+from the database, checks the stored challenge commits to it, then verifies the assertion (origin, RP ID,
+UP+UV flags, signature counter) against the registered public key in `webauthn_credentials`. The proof
+(`credential_id, public_key, rp_id, origin, challenge_inputs, authenticator_data, client_data_json, signature`)
+is embedded in the approval record (permission) or `cart_attempts.buyer_cart_approval` (cart) and copied into
+the Purchase Passport, whose verifier recomputes the challenge from the data and checks the signature with
+the embedded key — no database needed. Once an account has a passkey, session-only approval is refused
+(`PASSKEY_REQUIRED`), so assurance cannot be downgraded. Passkeys also allow usernameless sign-in.
 
 ## 4. Security controls in Phase 1
 - Session cookie: random 32-byte token, only its SHA-256 stored server-side; `HttpOnly`,

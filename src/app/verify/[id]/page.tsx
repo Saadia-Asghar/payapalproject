@@ -35,6 +35,7 @@ async function Result({ params }: { params: Promise<{ id: string }> }) {
             Amount: r.summary.amount,
             Payment: r.summary.payment,
             "Cart verdict": r.summary.verdict,
+            "Buyer approval": r.summary.assurance === "PASSKEY_VERIFIED" ? "Signed with the buyer's passkey (terms and exact cart)" : "Application-signed (no passkey)",
           }).map(([k, v]) => (
             <div key={k}>
               <dt className="text-[var(--muted)]">{k}</dt>

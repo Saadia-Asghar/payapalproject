@@ -37,6 +37,8 @@ signed with it must keep verifying. Pick a demo password (10+ characters) for th
 | `PAYPAL_WEBHOOK_ID` | optional | after step 6 |
 | `ANTHROPIC_API_KEY` | optional | turns on Claude form suggestions (rule-based parser without it) |
 | `CW_AI_MODEL` | optional | defaults to `claude-opus-5-5` |
+| `CW_DEMO_LOGIN` | optional | `off` hides the one-click demo buttons (on by default) |
+| `CW_WEBAUTHN_RP_ID` | optional | passkey domain; defaults to the site hostname. Passkeys made on `cartwitness.vercel.app` work only there, not on preview URLs |
 
 5. **Deploy.** The build log shows `[deploy-prepare] applied migrations…` and `demo accounts ready`.
    Warnings there say exactly which variable is missing.
@@ -63,4 +65,4 @@ BASE_URL=https://<your-domain> SEED_DEMO_PASSWORD='<judge password>' npm run smo
 - Production refuses to start without `DATABASE_URL` (serverless hosts have no persistent disk).
 - Migrations are append-only and idempotent; every deploy re-checks them safely.
 - Rate limits (login throttling, AI suggestions) are per serverless instance — fine for the demo.
-- Judge access: put the demo emails and password in Devpost's testing-instructions field, never in the repo.
+- Judge access: judges click **Try as buyer / Try as merchant** on `/login`. Put the PayPal sandbox buyer login (and, if you want, the seeded demo password) in Devpost's testing-instructions field, never in the repo.

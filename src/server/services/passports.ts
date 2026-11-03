@@ -4,6 +4,7 @@
 import { canonicalJson } from "../../lib/crypto/canonical.ts";
 import { appendEvidence, verifyEvidenceChain } from "../audit.ts";
 import { canonicalHash } from "../crypto/hash.ts";
+import { verifyPasskeyProof } from "../auth/webauthn.ts";
 import { getSigningKey, signRecord, verifyRecord, SIGNING_DOMAINS, type SigningKey } from "../crypto/signing.ts";
 import type { Queryable } from "../db/client.ts";
 import { ServiceError } from "./permissions.ts";
@@ -14,7 +15,8 @@ export interface PassportBundle {
   schema: typeof PASSPORT_SCHEMA_ID;
   passport_id: string;
   issued_at: string;
-  assurance: "APPLICATION_SIGNED";
+  /** PASSKEY_VERIFIED only when both the permission and the exact cart were approved with the buyer's passkey. */
+  assurance: "APPLICATION_SIGNED" | "PASSKEY_VERIFIED";
   permission: { policy_id: string; version: number; terms_hash: string; approval_record: string; approval_signature: string; approval_key_id: string };
   cart: {
     cart_hash: string;
@@ -23,6 +25,8 @@ export interface PassportBundle {
     evaluation_key_id: string;
     verdict: string;
     buyer_cart_approved_at: string;
+    /** Canonical CartApproval JSON (includes the passkey assertion when one was used). */
+    buyer_approval: string | null;
   };
   merchant: { id: string; display_name: string };
   payment: {
@@ -64,6 +68,7 @@ export async function issuePassport(q: Queryable, paymentOrderId: string, now: D
     eval_signature: string;
     eval_key: string;
     buyer_cart_approved_at: Date;
+    buyer_cart_approval: string | null;
     policy_id: string;
     version: number;
     terms_hash: string;
@@ -74,7 +79,7 @@ export async function issuePassport(q: Queryable, paymentOrderId: string, now: D
     `SELECT o.user_id, o.reconciliation_key, o.paypal_order_id, c.paypal_capture_id, c.status AS capture_status,
             c.amount::text AS amount, c.currency, c.response_hash,
             a.cart_json, a.cart_hash, a.verdict, a.evaluation_record, a.signature AS eval_signature, a.signing_key_id AS eval_key,
-            a.buyer_cart_approved_at, p.public_id AS policy_id, v.version, v.terms_hash, v.approval_record,
+            a.buyer_cart_approved_at, a.buyer_cart_approval, p.public_id AS policy_id, v.version, v.terms_hash, v.approval_record,
             v.signature AS approval_signature, v.signing_key_id AS approval_key
        FROM payment_orders o
        JOIN payment_captures c ON c.payment_order_id = o.id
@@ -89,11 +94,15 @@ export async function issuePassport(q: Queryable, paymentOrderId: string, now: D
   const [{ id }] = await q.query<{ id: string }>("SELECT 'CW-PP-' || lpad(nextval('passport_seq')::text, 5, '0') AS id");
   const [head] = await q.query<{ hash: string }>("SELECT hash FROM evidence_events ORDER BY seq DESC LIMIT 1");
 
+  const passkeyBound =
+    !!(JSON.parse(row.approval_record) as { passkey?: unknown }).passkey &&
+    !!row.buyer_cart_approval &&
+    !!(JSON.parse(row.buyer_cart_approval) as { passkey?: unknown }).passkey;
   const bundle: PassportBundle = {
     schema: PASSPORT_SCHEMA_ID,
     passport_id: id,
     issued_at: now.toISOString(),
-    assurance: "APPLICATION_SIGNED",
+    assurance: passkeyBound ? "PASSKEY_VERIFIED" : "APPLICATION_SIGNED",
     permission: {
       policy_id: row.policy_id,
       version: row.version,
@@ -109,6 +118,7 @@ export async function issuePassport(q: Queryable, paymentOrderId: string, now: D
       evaluation_key_id: row.eval_key,
       verdict: row.verdict,
       buyer_cart_approved_at: new Date(row.buyer_cart_approved_at).toISOString(),
+      buyer_approval: row.buyer_cart_approval,
     },
     merchant: cart.merchant,
     payment: {
@@ -148,9 +158,10 @@ export interface VerificationCheck {
 
 /**
  * Verifies a passport bundle using only public keys: the passport signature, the embedded
- * permission-approval and cart-evaluation signatures, and that they reference each other.
+ * permission-approval and cart-evaluation signatures, that they reference each other, and
+ * (when present) the buyer's passkey signatures over the exact terms and the exact cart.
  */
-export function verifyPassportBundle(input: unknown, signature: unknown, keyId: unknown, keys: Record<string, string>): VerificationCheck[] {
+export async function verifyPassportBundle(input: unknown, signature: unknown, keyId: unknown, keys: Record<string, string>): Promise<VerificationCheck[]> {
   const b = input as Partial<PassportBundle> | null;
   const checks: VerificationCheck[] = [];
   const add = (label: string, fn: () => boolean) => {
@@ -190,7 +201,37 @@ export function verifyPassportBundle(input: unknown, signature: unknown, keyId: 
     );
   });
   add("PayPal capture recorded as completed", () => b!.payment!.capture_status === "COMPLETED" && !!b!.payment!.paypal_capture_id);
+
+  // Buyer-bound approvals. A bundle that claims PASSKEY_VERIFIED must carry both valid passkey signatures.
+  // Malformed records already failed the checks above; treat them as absent here.
+  const approval = parseJson<{ passkey?: unknown }>(b?.permission?.approval_record) ?? {};
+  const cartApproval = parseJson<{ passkey?: unknown; cart_hash?: string; cart_attempt_id?: string }>(b?.cart?.buyer_approval);
+  if (approval.passkey || b?.assurance === "PASSKEY_VERIFIED") {
+    const p = b?.permission;
+    checks.push({
+      label: "Buyer's passkey signed these exact permission terms",
+      ok: !!p && (await verifyPasskeyProof(approval.passkey, { purpose: "PERMISSION_APPROVAL", policy_id: p.policy_id, version: p.version, terms_hash: p.terms_hash })),
+    });
+  }
+  if (cartApproval?.passkey || b?.assurance === "PASSKEY_VERIFIED") {
+    checks.push({
+      label: "Buyer's passkey signed this exact cart",
+      ok:
+        !!cartApproval &&
+        cartApproval.cart_hash === b?.cart?.cart_hash &&
+        typeof cartApproval.cart_attempt_id === "string" &&
+        (await verifyPasskeyProof(cartApproval.passkey, { purpose: "CART_APPROVAL", cart_attempt_id: cartApproval.cart_attempt_id, cart_hash: b!.cart!.cart_hash })),
+    });
+  }
   return checks;
+}
+
+function parseJson<T>(text: string | null | undefined): T | null {
+  try {
+    return text ? (JSON.parse(text) as T) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function publicKeys(q: Queryable) {
@@ -218,7 +259,7 @@ async function loadPassport(q: Queryable, passportId: string) {
 /** Full check of a stored passport: signatures plus cross-checks against the live database. */
 async function verifyStored(q: Queryable, row: PassportRow) {
   const bundle = JSON.parse(row.bundle_json) as PassportBundle;
-  const checks = verifyPassportBundle(bundle, row.signature, row.signing_key_id, await publicKeys(q));
+  const checks = await verifyPassportBundle(bundle, row.signature, row.signing_key_id, await publicKeys(q));
   const [db] = await q.query<{ terms_hash: string; cart_hash: string; capture_id: string; amount: string }>(
     `SELECT v.terms_hash, a.cart_hash, c.paypal_capture_id AS capture_id, c.amount::text AS amount
        FROM payment_orders o
@@ -279,6 +320,7 @@ export async function publicVerify(q: Queryable, passportId: string) {
       amount: `${bundle.payment.amount} ${bundle.payment.currency}`,
       payment: "PayPal sandbox capture completed",
       verdict: bundle.cart.verdict,
+      assurance: bundle.assurance,
     },
   };
 }
@@ -286,6 +328,6 @@ export async function publicVerify(q: Queryable, passportId: string) {
 /** Verifies a bundle someone pasted or uploaded (e.g. to show that editing it breaks verification). */
 export async function verifyUploaded(q: Queryable, signed: unknown) {
   const s = signed as Partial<SignedPassport> | null;
-  const checks = verifyPassportBundle(s?.bundle, s?.signature, s?.signing_key_id, await publicKeys(q));
-  return { valid: checks.every((c) => c.ok), verification: "SERVER_VERIFIED" as const, checks };
+  const checks = await verifyPassportBundle(s?.bundle, s?.signature, s?.signing_key_id, await publicKeys(q));
+  return { valid: checks.every((c) => c.ok), verification: "SERVER_VERIFIED" as const, checks, assurance: s?.bundle?.assurance ?? null };
 }

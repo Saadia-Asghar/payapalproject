@@ -58,7 +58,7 @@ describe("permission approval", () => {
     expect(detail.effectiveStatus).toBe("ACTIVE");
     expect(detail.active?.terms.max_total).toEqual({ currency: "USD", value: "150.00" });
     expect(detail.active?.summary_text).toBe(review.summary);
-    expect(detail.active?.integrity).toEqual({ termsIntact: true, signatureValid: true });
+    expect(detail.active?.integrity).toEqual({ termsIntact: true, signatureValid: true, passkeyValid: null });
   });
 
   it("refuses approval without all three consent checkboxes", async () => {

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { termRows } from "@/lib/permissions/present";
 import { CONSENT_KEYS, CONSENT_STATEMENTS, type ApprovedTerms, type ConsentKey, type FieldErrors } from "@/lib/permissions/terms";
 import { apiCall, ApiError } from "./api-client";
+import { PasskeyApproveButton, type PasskeyAssertion } from "./PasskeyApproveButton";
 import { btn, card } from "./ui";
 
 interface Review {
@@ -18,6 +19,7 @@ interface Review {
   termsHash: string;
   summary: string;
   merchants: Record<string, string>;
+  hasPasskey: boolean;
 }
 
 type LoadState = { kind: "loading" } | { kind: "ready"; review: Review } | { kind: "invalid"; errors: FieldErrors; message: string } | { kind: "error"; message: string };
@@ -72,22 +74,22 @@ export function ReviewPanel({ permissionId }: { permissionId: string }) {
   const { review } = state;
   const allChecked = CONSENT_KEYS.every((k) => consents[k]);
 
-  async function approve() {
+  async function approve(passkey: PasskeyAssertion | undefined) {
     setBusy(true);
     setProblem(null);
     try {
-      await apiCall(`/api/permissions/${permissionId}/approve`, "POST", { terms_hash: review.termsHash, consents });
+      await apiCall(`/api/permissions/${permissionId}/approve`, "POST", { terms_hash: review.termsHash, consents, passkey });
       router.push(`/permissions/${permissionId}?approved=${review.version}`);
       router.refresh();
     } catch (err) {
+      setBusy(false);
       if (err instanceof ApiError && err.code === "TERMS_CHANGED") {
         setProblem("These terms changed since this page loaded. The latest version is shown below — please review it again.");
         setConsents(NO_CONSENTS);
         setState(await load());
-      } else {
-        setProblem(err instanceof Error ? err.message : "Approval failed.");
+        return;
       }
-      setBusy(false);
+      throw err; // shown by the approve button
     }
   }
 
@@ -152,10 +154,17 @@ export function ReviewPanel({ permissionId }: { permissionId: string }) {
             {problem}
           </p>
         )}
-        <div className="mt-6 flex flex-wrap gap-3">
-          <button type="button" className={btn.primary} disabled={!allChecked || busy} onClick={() => void approve()}>
-            {busy ? "Approving…" : "Approve permission"}
-          </button>
+        <div className="mt-6">
+          <PasskeyApproveButton
+            label="Approve permission"
+            hasPasskey={review.hasPasskey}
+            disabled={!allChecked || busy}
+            optionsUrl={`/api/permissions/${permissionId}/approve/options`}
+            optionsBody={{ terms_hash: review.termsHash }}
+            onApprove={approve}
+          />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
           <Link href={`/permissions/${permissionId}/edit`} className={btn.secondary}>
             Edit
           </Link>

@@ -1,10 +1,15 @@
 import { z } from "zod";
+import { passkeyAssertionSchema, relyingPartyFrom, toPasskeyInput } from "@/server/auth/webauthn";
 import { getDb } from "@/server/db/client";
 import { api, readJson, requireUser } from "@/server/http";
 import { approveCart } from "@/server/services/carts";
 import { ServiceError } from "@/server/services/permissions";
 
-const body = z.strictObject({ cart_hash: z.string().regex(/^sha256:[0-9a-f]{64}$/) });
+const body = z.strictObject({
+  cart_hash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  // Passkey assertion over this exact cart (from POST ./options). Required once the account has a passkey.
+  passkey: passkeyAssertionSchema.optional(),
+});
 
 /** The buyer approves the exact cart they were shown, identified by its hash. */
 export const POST = api(async (req, ctx: RouteContext<"/api/carts/[id]/approve">) => {
@@ -12,5 +17,10 @@ export const POST = api(async (req, ctx: RouteContext<"/api/carts/[id]/approve">
   const { id } = await ctx.params;
   const parsed = body.safeParse(await readJson(req));
   if (!parsed.success) throw new ServiceError("BAD_REQUEST", 400, "Invalid approval request.");
-  return approveCart(await getDb(), { userId: user.id, attemptId: id, cartHash: parsed.data.cart_hash });
+  return approveCart(await getDb(), {
+    userId: user.id,
+    attemptId: id,
+    cartHash: parsed.data.cart_hash,
+    passkey: parsed.data.passkey ? toPasskeyInput(parsed.data.passkey, relyingPartyFrom(req)) : undefined,
+  });
 });

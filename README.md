@@ -20,6 +20,8 @@ payment to a verifiable **Purchase Passport** for disputes.
 | 3 PayPal checkout | Policy-gated Orders v2 create → PayPal buyer approval → server capture → Passport; idempotent, revocation-safe, verified webhooks | ✅ code + mocked tests · ⏳ live sandbox run once keys are added |
 | 4 Purchase Passport | Signed proof bundle on verified capture, owner page + JSON download, public redacted `/verify`, paste-a-bundle tamper check | ✅ |
 | 5 Merchant workspace | Store-scoped cart checks, SAMPLE disputes with grounded evidence packets (provided vs missing), reviewer step, JSON export | ✅ |
+| 6 Buyer-bound approval | **Passkeys (WebAuthn)**: the buyer's device signs a challenge derived from the exact terms hash and the exact cart hash; proofs embedded in records and re-verified in the Passport; no downgrade once a passkey exists; passkey sign-in | ✅ |
+| Judge access | **One-click demo**: "Try as buyer" (fresh private account) / "Try as merchant" on the sign-in page | ✅ |
 
 Nothing in this repo simulates a payment. Without PayPal keys the checkout button is disabled and says why.
 
@@ -33,8 +35,9 @@ npm run setup      # creates .env.local, a signing key, the database and demo ac
 npm run dev
 ```
 
-Open http://localhost:3000 and sign in as `buyer@demo.cartwitness.test` (or `merchant@demo.cartwitness.test`).
-The password is `SEED_DEMO_PASSWORD` in `.env.local`. Visit **/setup** to see which keys are still missing.
+Open http://localhost:3000/login and click **Try as buyer** or **Try as merchant** — no password needed.
+The seeded accounts `buyer@demo.cartwitness.test` / `merchant@demo.cartwitness.test` also work with `SEED_DEMO_PASSWORD`
+from `.env.local`. Visit **/setup** to see which keys are still missing.
 
 Add keys later in `.env.local` and restart: PayPal sandbox keys turn on checkout ([docs/PAYPAL_INTEGRATION.md](docs/PAYPAL_INTEGRATION.md));
 `ANTHROPIC_API_KEY` turns on Claude form suggestions. Without them the app runs and says what is unavailable.
@@ -69,6 +72,8 @@ All documented in [.env.example](.env.example). **Never commit `.env.local` or r
 | `SEED_DEMO_PASSWORD` | no | Demo account password used by `db:seed` |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` / `PAYPAL_API_BASE` / `PAYPAL_WEBHOOK_ID` / `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | Phase 3 | Sandbox app credentials |
 | `ANTHROPIC_API_KEY` / `CW_AI_MODEL` | optional | Claude pre-fills Permission Form fields for buyer review (default model `claude-opus-5-5`); without a key a rule-based parser is used |
+| `CW_DEMO_LOGIN` | no | `off` hides one-click demo sign-in (on by default) |
+| `CW_WEBAUTHN_RP_ID` | no | Passkey relying-party ID; defaults to the site's hostname (passkeys work on the domain they were created on) |
 
 ## Deploying (Vercel + Supabase)
 
@@ -87,13 +92,24 @@ Check a deployment end to end with `BASE_URL=https://<domain> npm run smoke`.
    strings, `policy_id` + `version` included), computes `sha256:` of it and shows the buyer the summary and fingerprint.
 2. **Approve** — the browser posts back that fingerprint plus the three consent checkboxes. The server
    recomputes the hash from the stored draft; if it differs from what was reviewed (or the posted one), approval is refused.
-3. **Record** — an immutable `permission_versions` row (DB trigger blocks UPDATE/DELETE), an Ed25519
-   signature over the approval record (public key at `GET /api/keys`), and a hash-chained `evidence_events` entry.
-4. **Edit** — creates version *n+1*; version *n* is never rewritten. **Revoke** stops future use only.
+3. **Passkey (buyer-bound)** — the server issues a WebAuthn challenge equal to
+   `SHA-256(canonical{domain, purpose, policy_id, version, terms_hash, nonce})`. The buyer's authenticator signs
+   `authenticatorData ‖ SHA-256(clientDataJSON)` with user verification (Face ID / Touch ID / Windows Hello / PIN).
+   The server checks origin, RP ID, UV flag, counter and that the challenge commits to *these* terms. The same is done
+   for the exact cart (`cart_attempt_id, cart_hash`). Once an account has a passkey, session-only approval is refused.
+4. **Record** — an immutable `permission_versions` row (DB trigger blocks UPDATE/DELETE) containing the passkey
+   assertion + public key, an Ed25519 application signature over the whole approval record (public key at
+   `GET /api/keys`), and a hash-chained `evidence_events` entry.
+5. **Edit** — creates version *n+1*; version *n* is never rewritten. **Revoke** stops future use only.
 
-Assurance is labelled **application-signed**: it proves the record has not changed since CartWitness signed it
-after an authenticated session approved it. It is *not* cryptographic proof of which human clicked approve —
-the WebAuthn/passkey upgrade is a stretch goal. CartWitness is AP2-*inspired*, not AP2-certified.
+Assurance levels, stated exactly:
+- **PASSKEY_VERIFIED** — the holder of a passkey registered to this account approved *these exact terms* and *this
+  exact cart*, with user verification. Anyone can re-check it from the Passport bundle alone (challenge recomputed from
+  the data, signature checked with the embedded public key). It does not prove the legal identity behind the account.
+- **APPLICATION_SIGNED** — (accounts without a passkey) the record is unchanged since CartWitness signed it after an
+  authenticated session approved it; not cryptographic proof of which human clicked approve.
+
+CartWitness is AP2-*inspired*, not AP2-certified.
 
 More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PHASES.md](docs/PHASES.md) · [docs/DEPLOY.md](docs/DEPLOY.md) · [docs/DEMO.md](docs/DEMO.md) (demo script + Devpost text) · [docs/PAYPAL_INTEGRATION.md](docs/PAYPAL_INTEGRATION.md)
 

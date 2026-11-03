@@ -90,6 +90,9 @@ async function Receipt({ params, searchParams }: { params: Promise<{ id: string 
         <div className="mt-6 flex flex-wrap gap-x-5 gap-y-1 rounded-lg bg-[var(--surface)] px-4 py-3">
           <Check ok={active.integrity.termsIntact} label="Stored terms match their fingerprint" />
           <Check ok={active.integrity.signatureValid} label="Approval signature valid (application-signed)" />
+          {active.integrity.passkeyValid !== null && (
+            <Check ok={active.integrity.passkeyValid} label="🔐 Buyer's passkey signed these exact terms" />
+          )}
         </div>
         {!intact && <p className="mt-2 text-sm font-semibold text-red-700">Tamper detected: this record no longer matches what was approved.</p>}
 
@@ -164,8 +167,9 @@ async function Receipt({ params, searchParams }: { params: Promise<{ id: string 
             </div>
           </dl>
           <p className="mt-3 text-xs text-[var(--muted)]">
-            Assurance level: application-signed. This shows the record is unchanged since CartWitness signed it after an authenticated
-            session approved it; it is not, by itself, cryptographic proof of which person clicked approve.
+            {active.assurance === "PASSKEY_VERIFIED"
+              ? "Assurance level: passkey-verified. The buyer's passkey (user-verified WebAuthn) signed a challenge derived from this exact policy version and terms fingerprint; the assertion and public key are in the record above, so anyone can re-check it. It proves the holder of the passkey registered to this account approved these terms."
+              : "Assurance level: application-signed. This shows the record is unchanged since CartWitness signed it after an authenticated session approved it; it is not, by itself, cryptographic proof of which person clicked approve. Add a passkey on your Account page to make future approvals buyer-bound."}
           </p>
         </details>
       </section>

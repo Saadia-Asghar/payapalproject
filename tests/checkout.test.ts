@@ -1,13 +1,15 @@
 // Phase 3 checkout against a fake PayPal REST server (no network, no real keys).
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { approvalOptions, registrationOptions, verifyRegistration } from "../src/server/auth/webauthn.ts";
 import { generatePrivatePem, keyFromPrivatePem } from "../src/server/crypto/signing.ts";
 import { createTestDb, type Db } from "../src/server/db/client.ts";
 import { createPayPalClient } from "../src/server/paypal/client.ts";
 import { approveCart, evaluateAndRecord } from "../src/server/services/carts.ts";
 import { cancelCheckout, captureCheckout, handleWebhook, startCheckout } from "../src/server/services/checkout.ts";
-import { getPassportForOwner } from "../src/server/services/passports.ts";
+import { getPassportForOwner, verifyUploaded } from "../src/server/services/passports.ts";
 import { approvePermission, createPermission, reviewPermission, revokePermission, ServiceError } from "../src/server/services/permissions.ts";
 import { validForm } from "./fixtures.ts";
+import { SoftAuthenticator } from "./soft-authenticator.ts";
 
 // Checkout runs "now", so the permission deadline must be in the future.
 const future = new Date(Date.now() + 3 * 86_400_000).toISOString();
@@ -211,5 +213,51 @@ describe("PayPal webhooks", () => {
     const first = await handleWebhook(db, pp, { headers, rawBody: event(a.paypalOrderId) });
     expect(first).toMatchObject({ handled: true, status: "CAPTURED" });
     expect(await handleWebhook(db, pp, { headers, rawBody: event(a.paypalOrderId) })).toEqual({ handled: false, duplicate: true });
+  });
+});
+
+describe("Purchase Passport with passkey approvals", () => {
+  it("is PASSKEY_VERIFIED when the buyer's passkey signed the terms and the cart, and fails if either proof is altered", async () => {
+    const rp = { rpID: "localhost", origin: "http://localhost:3000" };
+    const device = new SoftAuthenticator(rp.origin);
+    const user = { id: buyer, email: "b@x.test", display_name: "B" };
+    const reg = await db.tx((q) => registrationOptions(q, user, rp));
+    await db.tx((q) => verifyRegistration(q, buyer, { challengeId: reg.challengeId, response: device.register(reg.options) as never, rp }));
+    const sign = async (binding: Parameters<typeof approvalOptions>[3]) => {
+      const { challengeId, options } = await db.tx((q) => approvalOptions(q, buyer, rp, binding));
+      return { challengeId, response: device.assert(options) as never, rp };
+    };
+
+    const { id: pid } = await createPermission(db, buyer, { ...validForm(), expires_at: future });
+    const r = await reviewPermission(db, buyer, pid);
+    await approvePermission(db, {
+      userId: buyer, sessionId: "s", permissionId: pid, termsHash: r.termsHash, signingKey,
+      consents: { checked_terms: true, ai_may_err: true, no_charge_yet: true },
+      passkey: await sign({ purpose: "PERMISSION_APPROVAL", policy_id: r.policyId, version: r.version, terms_hash: r.termsHash }),
+    });
+    const cart = await evaluateAndRecord(db, { userId: buyer, permissionId: pid, sku: "CW-SNK-RUN-WHT-M10", signingKey });
+    await approveCart(db, {
+      userId: buyer, attemptId: cart.id, cartHash: cart.cartHash,
+      passkey: await sign({ purpose: "CART_APPROVAL", cart_attempt_id: cart.id, cart_hash: cart.cartHash }),
+    });
+
+    const pp = fakePayPal(state);
+    const a = await startCheckout(db, pp, { userId: buyer, attemptId: cart.id });
+    const res = await captureCheckout(db, pp, { userId: buyer, paymentOrderId: a.paymentOrderId });
+    const passport = await getPassportForOwner(db, buyer, res.passportId!);
+    expect(passport.bundle.assurance).toBe("PASSKEY_VERIFIED");
+    expect(passport.valid).toBe(true);
+    expect(passport.checks.map((c) => c.label)).toEqual(
+      expect.arrayContaining(["Buyer's passkey signed these exact permission terms", "Buyer's passkey signed this exact cart"]),
+    );
+
+    // Swap in a forged cart approval (a different cart hash): the passkey check fails even before signatures.
+    const forged = structuredClone(passport.signed);
+    const approval = JSON.parse(forged.bundle.cart.buyer_approval!);
+    approval.passkey.challenge_inputs.cart_hash = `sha256:${"2".repeat(64)}`;
+    forged.bundle.cart.buyer_approval = JSON.stringify(approval);
+    const checked = await verifyUploaded(db, forged);
+    expect(checked.valid).toBe(false);
+    expect(checked.checks.find((c) => c.label === "Buyer's passkey signed this exact cart")?.ok).toBe(false);
   });
 });

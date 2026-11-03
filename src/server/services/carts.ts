@@ -18,7 +18,18 @@ import { appendEvidence } from "../audit.ts";
 import { canonicalHash } from "../crypto/hash.ts";
 import { getSigningKey, signRecord, verifyRecord, SIGNING_DOMAINS, type SigningKey } from "../crypto/signing.ts";
 import type { Db, Queryable } from "../db/client.ts";
+import { hasPasskey, verifyApproval, type PasskeyApprovalInput, type PasskeyProof } from "../auth/webauthn.ts";
 import { assertVersionUsable, ServiceError, type PermissionRow } from "./permissions.ts";
+
+/** The buyer's approval of one exact cart, stored with the attempt and embedded in the Purchase Passport. */
+export interface CartApproval {
+  type: "cart_approval";
+  cart_attempt_id: string;
+  cart_hash: string;
+  approved_at: string;
+  assurance: "PASSKEY_VERIFIED" | "APPLICATION_SIGNED";
+  passkey?: PasskeyProof;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -202,6 +213,7 @@ export interface AttemptRow {
   signature: string;
   signing_key_id: string;
   buyer_cart_approved_at: Date | null;
+  buyer_cart_approval: string | null;
   created_at: Date;
 }
 
@@ -260,7 +272,10 @@ export async function getAttemptDetail(q: Queryable, userId: string, attemptId: 
 }
 
 /** The buyer approves this exact cart (by hash). Fails if anything changed since the check. */
-export async function approveCart(db: Db, input: { userId: string; attemptId: string; cartHash: string; now?: Date }) {
+export async function approveCart(
+  db: Db,
+  input: { userId: string; attemptId: string; cartHash: string; passkey?: PasskeyApprovalInput; now?: Date },
+) {
   const now = input.now ?? new Date();
   return db.tx(async (q) => {
     const a = await loadAttempt(q, input.userId, input.attemptId, true);
@@ -278,16 +293,34 @@ export async function approveCart(db: Db, input: { userId: string; attemptId: st
       );
     }
     if (!recheck.inStock) throw new ServiceError("OUT_OF_STOCK", 409, "The item is no longer in stock.");
-    await q.query("UPDATE cart_attempts SET buyer_cart_approved_at = $2 WHERE id = $1", [a.id, now.toISOString()]);
+    // The passkey signs a challenge derived from this exact cart hash (see auth/webauthn.ts).
+    const binding = { purpose: "CART_APPROVAL", cart_attempt_id: a.id, cart_hash: a.cart_hash } as const;
+    const passkey = input.passkey ? await verifyApproval(q, input.userId, binding, input.passkey) : null;
+    if (!passkey && (await hasPasskey(q, input.userId))) {
+      throw new ServiceError("PASSKEY_REQUIRED", 409, "This account has a passkey. Please approve the cart with your passkey.");
+    }
+    const approval: CartApproval = {
+      type: "cart_approval",
+      cart_attempt_id: a.id,
+      cart_hash: a.cart_hash,
+      approved_at: now.toISOString(),
+      assurance: passkey ? "PASSKEY_VERIFIED" : "APPLICATION_SIGNED",
+      ...(passkey ? { passkey } : {}),
+    };
+    await q.query("UPDATE cart_attempts SET buyer_cart_approved_at = $2, buyer_cart_approval = $3 WHERE id = $1", [
+      a.id,
+      now.toISOString(),
+      canonicalJson(approval),
+    ]);
     await appendEvidence(q, {
       subjectType: "cart",
       subjectId: a.id,
       eventType: "CART_APPROVED_BY_BUYER",
       actorId: input.userId,
-      payload: { cart_hash: a.cart_hash, approved_at: now.toISOString() },
+      payload: { cart_hash: a.cart_hash, approved_at: now.toISOString(), assurance: approval.assurance, passkey_credential_id: passkey?.credential_id ?? null },
       at: now,
     });
-    return { approvedAt: now.toISOString(), alreadyApproved: false };
+    return { approvedAt: now.toISOString(), alreadyApproved: false, assurance: approval.assurance };
   });
 }
 

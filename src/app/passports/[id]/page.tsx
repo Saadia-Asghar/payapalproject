@@ -35,7 +35,7 @@ async function Passport({ params }: { params: Promise<{ id: string }> }) {
   return (
     <div className="space-y-6">
       <div className={`rounded-2xl border-2 p-6 ${p.valid ? "border-emerald-300 bg-emerald-50" : "border-red-300 bg-red-50"}`}>
-        <p className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Purchase Passport · application-signed</p>
+        <p className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Purchase Passport · {b.assurance === "PASSKEY_VERIFIED" ? "🔐 passkey-verified buyer approvals" : "application-signed"}</p>
         <h1 className="mt-2 text-xl font-semibold">{p.valid ? `✓ ${b.passport_id} verifies` : `✗ ${b.passport_id} failed verification`}</h1>
       </div>
       <section className={card}>

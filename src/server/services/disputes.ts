@@ -7,6 +7,7 @@ import type { Cart, RuleResult, Verdict } from "../../lib/policy/engine.ts";
 import type { ApprovedTerms } from "../../lib/permissions/terms.ts";
 import { appendEvidence } from "../audit.ts";
 import { canonicalHash, sha256Hex } from "../crypto/hash.ts";
+import { verifyPasskeyProof } from "../auth/webauthn.ts";
 import { verifyRecord, SIGNING_DOMAINS } from "../crypto/signing.ts";
 import type { Db, Queryable } from "../db/client.ts";
 import { ServiceError } from "./permissions.ts";
@@ -113,6 +114,7 @@ interface Facts {
     signature: string;
     signing_key_id: string;
     buyer_cart_approved_at: Date | null;
+    buyer_cart_approval: string | null;
     created_at: Date;
   };
   version: { canonical_json: string; terms_hash: string; approval_record: string; signature: string; signing_key_id: string; approved_at: Date };
@@ -120,12 +122,14 @@ interface Facts {
   payment: { id: string; reconciliation_key: string; paypal_order_id: string | null; status: string; capture_id: string | null; captured_at: Date | null } | null;
   passportId: string | null;
   keys: Record<string, string>;
+  /** Result of re-verifying the buyer's passkey signatures; null when that approval used no passkey. */
+  passkey: { terms: boolean | null; cart: boolean | null };
 }
 
 async function gatherFacts(q: Queryable, attemptId: string): Promise<Facts> {
   const [attempt] = await q.query<Facts["attempt"] & { permission_version_id: string }>("SELECT * FROM cart_attempts WHERE id = $1", [attemptId]);
   if (!attempt) throw new ServiceError("NOT_FOUND", 404, "Cart not found.");
-  const [version] = await q.query<Facts["version"] & { permission_id: string }>("SELECT * FROM permission_versions WHERE id = $1", [attempt.permission_version_id]);
+  const [version] = await q.query<Facts["version"] & { permission_id: string; version: number }>("SELECT * FROM permission_versions WHERE id = $1", [attempt.permission_version_id]);
   const [perm] = await q.query<{ public_id: string }>("SELECT public_id FROM permissions WHERE id = $1", [version.permission_id]);
   const [payment] = await q.query<NonNullable<Facts["payment"]>>(
     `SELECT o.id, o.reconciliation_key, o.paypal_order_id, o.status, c.paypal_capture_id AS capture_id, c.created_at AS captured_at
@@ -134,7 +138,15 @@ async function gatherFacts(q: Queryable, attemptId: string): Promise<Facts> {
   );
   const [pp] = payment ? await q.query<{ id: string }>("SELECT id FROM passports WHERE payment_order_id = $1", [payment.id]) : [];
   const keyRows = await q.query<{ key_id: string; public_key_pem: string }>("SELECT key_id, public_key_pem FROM signing_keys");
+  const approvalProof = (JSON.parse(version.approval_record) as { passkey?: unknown }).passkey;
+  const cartProof = attempt.buyer_cart_approval ? (JSON.parse(attempt.buyer_cart_approval) as { passkey?: unknown }).passkey : undefined;
   return {
+    passkey: {
+      terms: approvalProof
+        ? await verifyPasskeyProof(approvalProof, { purpose: "PERMISSION_APPROVAL", policy_id: perm.public_id, version: version.version, terms_hash: version.terms_hash })
+        : null,
+      cart: cartProof ? await verifyPasskeyProof(cartProof, { purpose: "CART_APPROVAL", cart_attempt_id: attempt.id, cart_hash: attempt.cart_hash }) : null,
+    },
     attempt,
     version,
     policyId: perm.public_id,
@@ -175,13 +187,20 @@ export function buildPacket(input: {
     detail: ok ? provided : missing,
   });
   const terms_ = item("Approved permission terms (versioned snapshot)", termsIntact, `${f.policyId} v${terms.version}, fingerprint ${f.version.terms_hash.slice(0, 23)}…`, "Stored terms do not match their fingerprint.");
-  const approval = item("Buyer approval event", approvalValid, `Approved ${iso(f.version.approved_at)} by an authenticated session; application signature valid.`, "Approval signature could not be verified.");
+  const approval = item(
+    "Buyer approval event",
+    approvalValid && f.passkey.terms !== false,
+    f.passkey.terms
+      ? `Approved ${iso(f.version.approved_at)} with the buyer's passkey (WebAuthn, user-verified) over these exact terms; passkey and application signatures valid.`
+      : `Approved ${iso(f.version.approved_at)} by an authenticated session; application signature valid. No passkey was used, so this does not cryptographically bind the approval to the buyer's device.`,
+    f.passkey.terms === false ? "The buyer's passkey signature over the terms failed verification." : "Approval signature could not be verified.",
+  );
   const cartProof = item("Evaluated cart snapshot and verdict", cartIntact && evalValid, `Cart ${f.attempt.cart_hash.slice(0, 23)}…, verdict ${f.attempt.verdict}, signature valid.`, "Cart record or its signature failed verification.");
   const cartApproval = item(
     "Buyer approval of this exact cart",
-    !!f.attempt.buyer_cart_approved_at,
-    `Approved ${f.attempt.buyer_cart_approved_at ? iso(f.attempt.buyer_cart_approved_at) : ""}.`,
-    "The buyer did not approve this cart in CartWitness.",
+    !!f.attempt.buyer_cart_approved_at && f.passkey.cart !== false,
+    `Approved ${f.attempt.buyer_cart_approved_at ? iso(f.attempt.buyer_cart_approved_at) : ""}${f.passkey.cart ? " with the buyer's passkey over this exact cart fingerprint (signature valid)" : " in an authenticated session (no passkey)"}.`,
+    f.passkey.cart === false ? "The buyer's passkey signature over the cart failed verification." : "The buyer did not approve this cart in CartWitness.",
   );
   const paypal = item(
     "PayPal order and capture identifiers",

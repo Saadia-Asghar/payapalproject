@@ -13,7 +13,8 @@ the flow has been exercised end to end in a browser.
 | **3 — PayPal checkout** | `/api/checkout/create` policy gate → Orders v2 (custom_id, PayPal-Request-Id), JS SDK buyer approval, server capture + GET reconcile, single-use consume, webhooks w/ signature verification | Duplicate create/capture produce no second transaction; fake webhook rejected | ✅ implemented (`paypal/client.ts`, `services/checkout.ts`, PayPal buttons) and tested against a mocked PayPal; live sandbox run pending keys — see [PAYPAL_INTEGRATION.md](PAYPAL_INTEGRATION.md) |
 | **4 — Purchase Passport + verification** | Signed proof bundle (permission version + cart + PayPal IDs + audit chain), `/verify/{id}` redacted public check, tamper demo | Edited bundle fails verification | ✅ (issued on verified capture) |
 | **5 — Merchant workspace + sample disputes** | Merchant role, attempts list, SAMPLE-labelled dispute intake, grounded evidence packet, reviewer step, JSON/PDF export | Missing evidence listed; sample never shown as real | ✅ JSON export + print / save-as-PDF view |
-| **Stretch** | WebAuthn approval bound to terms hash; real Disputes API (if permitted); AG Studio dashboard | Only after P0–5 work end to end | — |
+| **6 — Buyer-bound approval (was stretch)** | Passkey (WebAuthn) approval bound to `policy_id + version + terms_hash` and to the exact cart hash; proofs in records and Passport; no downgrade; passkey sign-in; one-click demo accounts | Proof fails for other terms/cart, other device, replay, missing UV | ✅ tests + smoke (software authenticator) |
+| **Stretch** | Real Disputes API (if permitted); AG Studio dashboard | Only after P0–6 work end to end | — |
 
 ## PayPal permission dependencies (flagged)
 

@@ -8,6 +8,7 @@ import { btn, card } from "@/components/ui";
 import { RuleStatusIcon, VERDICT_STYLE } from "@/components/verdict";
 import { formatDeadline } from "@/lib/permissions/summary";
 import { getSessionUser } from "@/server/auth/session";
+import { hasPasskey } from "@/server/auth/webauthn";
 import { getDb } from "@/server/db/client";
 import { getAttemptDetail } from "@/server/services/carts";
 import { getPaymentForAttempt } from "@/server/services/payments";
@@ -33,6 +34,7 @@ async function CartCheck({ params }: { params: Promise<{ id: string; attemptId: 
   });
   if (d.permissionId !== id) notFound();
   const payment = await getPaymentForAttempt(db, attemptId);
+  const buyerHasPasskey = await hasPasskey(db, session.user.id);
 
   const { attempt: a, cart, terms, rules } = d;
   const style = VERDICT_STYLE[a.verdict];
@@ -40,6 +42,7 @@ async function CartCheck({ params }: { params: Promise<{ id: string; attemptId: 
   const intact = d.integrity.cartIntact && d.integrity.evaluationIntact && d.integrity.signatureValid;
   const approvedAt = a.buyer_cart_approved_at ? new Date(a.buyer_cart_approved_at).toISOString() : null;
   const canApprove = a.verdict === "ALLOW" && !approvedAt && d.stillCurrent && d.permissionUsable.ok;
+  const approvedWithPasskey = !!a.buyer_cart_approval && (JSON.parse(a.buyer_cart_approval) as { assurance?: string }).assurance === "PASSKEY_VERIFIED";
 
   return (
     <div className="space-y-6">
@@ -112,7 +115,8 @@ async function CartCheck({ params }: { params: Promise<{ id: string; attemptId: 
         {a.verdict === "ALLOW" && approvedAt && (
           <div className="space-y-3">
             <p className="text-sm font-semibold text-emerald-800">
-              You approved this exact cart on {formatDeadline(approvedAt, terms.display_timezone)}.
+              You approved this exact cart on {formatDeadline(approvedAt, terms.display_timezone)}
+              {approvedWithPasskey ? " with your passkey 🔐" : " (application-signed, no passkey)"}.
             </p>
             {payment?.passport_id ? (
               <Link href={`/passports/${payment.passport_id}`} className={btn.primary}>
@@ -143,7 +147,7 @@ async function CartCheck({ params }: { params: Promise<{ id: string; attemptId: 
             <p className="text-sm">
               Approving records that you saw and accepted this exact cart (fingerprint below). You will still approve payment in PayPal.
             </p>
-            <CartApproveButton attemptId={a.id} cartHash={a.cart_hash} total={cart.total} />
+            <CartApproveButton attemptId={a.id} cartHash={a.cart_hash} total={cart.total} hasPasskey={buyerHasPasskey} />
           </div>
         )}
         {a.verdict === "ALLOW" && !approvedAt && !canApprove && (

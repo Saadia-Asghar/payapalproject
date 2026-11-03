@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { passkeyAssertionSchema, relyingPartyFrom, toPasskeyInput } from "@/server/auth/webauthn";
 import { getDb } from "@/server/db/client";
 import { api, readJson, requireUser } from "@/server/http";
 import { approvePermission, ServiceError } from "@/server/services/permissions";
@@ -10,6 +11,8 @@ const body = z.strictObject({
     ai_may_err: z.boolean().optional(),
     no_charge_yet: z.boolean().optional(),
   }),
+  // Passkey assertion over this exact version (from POST ./options). Required once the account has a passkey.
+  passkey: passkeyAssertionSchema.optional(),
 });
 
 export const POST = api(async (req, ctx: RouteContext<"/api/permissions/[id]/approve">) => {
@@ -23,6 +26,7 @@ export const POST = api(async (req, ctx: RouteContext<"/api/permissions/[id]/app
     permissionId: id,
     termsHash: parsed.data.terms_hash,
     consents: parsed.data.consents,
+    passkey: parsed.data.passkey ? toPasskeyInput(parsed.data.passkey, relyingPartyFrom(req)) : undefined,
     userAgent: req.headers.get("user-agent"),
   });
 });

@@ -3,6 +3,7 @@
 // Usage: BASE_URL=http://localhost:3000 npm run smoke   (password from SEED_DEMO_PASSWORD or .env.local)
 // Creates demo records (a permission, cart checks, a sample dispute); changes no prices permanently.
 import { existsSync, readFileSync } from "node:fs";
+import { SoftAuthenticator } from "../tests/soft-authenticator.ts";
 
 const BASE = (process.env.BASE_URL || "http://localhost:3000").replace(/\/$/, "");
 
@@ -68,6 +69,24 @@ const now = new Date();
 const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 const deadline = new Date(Date.now() + 3 * 86_400_000).toISOString();
 const CONSENTS = { checked_terms: true, ai_may_err: true, no_charge_yet: true };
+const DRAFT = {
+  request_text: "Smoke test",
+  product_type: "running shoes",
+  color: "white",
+  size: "US M 10",
+  condition: "NEW_ONLY",
+  quantity: 1,
+  max_total: "150",
+  currency: "USD",
+  merchant_ids: ["DEMO-SNEAKER-STORE"],
+  expires_at: deadline,
+  display_timezone: "UTC",
+  substitutions: "ASK_FIRST",
+  recurring: false,
+  review_mode: "APPROVE_FINAL_CART",
+  single_use: true,
+  ai_suggested_fields: ["max_total"],
+};
 
 async function main() {
   console.log(`CartWitness smoke test → ${BASE}\n`);
@@ -123,24 +142,7 @@ async function main() {
     assert(r.status === 422, `→ ${r.status}`);
   });
   await step("save, review and approve the permission (forged hash refused)", async () => {
-    const draft = {
-      request_text: "Smoke test",
-      product_type: "running shoes",
-      color: "white",
-      size: "US M 10",
-      condition: "NEW_ONLY",
-      quantity: 1,
-      max_total: "150",
-      currency: "USD",
-      merchant_ids: ["DEMO-SNEAKER-STORE"],
-      expires_at: deadline,
-      display_timezone: "UTC",
-      substitutions: "ASK_FIRST",
-      recurring: false,
-      review_mode: "APPROVE_FINAL_CART",
-      single_use: true,
-      ai_suggested_fields: ["max_total"],
-    };
+    const draft = DRAFT;
     const d = await buyer.req("PUT", `/api/permissions/${s.pid}/draft`, draft);
     assert(d.status === 200 && Object.keys(d.json.errors ?? {}).length === 0, `draft errors ${JSON.stringify(d.json?.errors)}`);
     const r = await buyer.req("POST", `/api/permissions/${s.pid}/review`);
@@ -251,6 +253,70 @@ async function main() {
     await merchant.page("/merchant", "Agent purchases checked against buyer permissions");
     await merchant.page("/merchant/catalog", "Trusted prices and stock");
     await merchant.page(`/merchant/disputes/${s.caseId}`, "SAMPLE CASE");
+  });
+
+  console.log("\nOne-click demo and passkeys");
+  const judge = new Client();
+  const device = new SoftAuthenticator(BASE);
+  await step("one-click demo: a fresh private buyer and the demo merchant sign in without a password", async () => {
+    const b = await judge.req("POST", "/api/auth/demo", { role: "BUYER" });
+    assert(b.status === 200 && b.json.role === "BUYER", `demo buyer → ${b.status} ${b.text.slice(0, 160)}`);
+    const list = await judge.req("GET", "/api/permissions");
+    assert(list.status === 200 && list.text.trim() === "[]", `demo buyer is not fresh: ${list.text.slice(0, 160)}`);
+    const m = new Client();
+    const r = await m.req("POST", "/api/auth/demo", { role: "MERCHANT" });
+    assert(r.status === 200 && r.json.role === "MERCHANT", `demo merchant → ${r.status}`);
+    await m.page("/merchant", "Demo Sneaker Store");
+    await anon.page("/login", "Try as buyer");
+  });
+  await step("buyer registers a passkey (WebAuthn, user-verified)", async () => {
+    const o = await judge.req("POST", "/api/passkeys/register-options");
+    assert(o.status === 200 && o.json.options?.challenge, `options → ${o.status} ${o.text.slice(0, 160)}`);
+    const r = await judge.req("POST", "/api/passkeys/register", { challenge_id: o.json.challengeId, response: device.register(o.json.options) });
+    assert(r.status === 200 && r.json.id === device.id, `register → ${r.status} ${r.text.slice(0, 200)}`);
+    await judge.page("/account", "Passkeys");
+  });
+  await step("permission approval is passkey-signed over the exact terms hash (session-only approval refused)", async () => {
+    const c = await judge.req("POST", "/api/permissions");
+    s.ppid = c.json.id;
+    await judge.req("PUT", `/api/permissions/${s.ppid}/draft`, DRAFT);
+    const r = await judge.req("POST", `/api/permissions/${s.ppid}/review`);
+    assert(r.status === 200 && r.json.hasPasskey === true, "review should report the passkey");
+    const plain = await judge.req("POST", `/api/permissions/${s.ppid}/approve`, { terms_hash: r.json.termsHash, consents: CONSENTS });
+    assert(plain.status === 409 && plain.json.error?.code === "PASSKEY_REQUIRED", `session-only approve → ${plain.status}`);
+    const o = await judge.req("POST", `/api/permissions/${s.ppid}/approve/options`, { terms_hash: r.json.termsHash });
+    assert(o.status === 200, `approve options → ${o.status} ${o.text.slice(0, 160)}`);
+    const a = await judge.req("POST", `/api/permissions/${s.ppid}/approve`, {
+      terms_hash: r.json.termsHash,
+      consents: CONSENTS,
+      passkey: { challenge_id: o.json.challengeId, response: device.assert(o.json.options) },
+    });
+    assert(a.status === 200 && a.json.assurance === "PASSKEY_VERIFIED", `approve → ${a.status} ${a.text.slice(0, 200)}`);
+    const d = await judge.req("GET", `/api/permissions/${s.ppid}`);
+    assert(d.json.active?.integrity?.passkeyValid === true, "stored passkey proof does not verify");
+  });
+  await step("exact-cart approval is passkey-signed over the cart hash", async () => {
+    const e = await judge.req("POST", "/api/carts/evaluate", { permission_id: s.ppid, sku: "CW-SNK-RUN-WHT-M10", source: "AGENT" });
+    assert(e.status === 200 && e.json.verdict === "ALLOW", `evaluate → ${e.status}`);
+    const o = await judge.req("POST", `/api/carts/${e.json.id}/approve/options`, { cart_hash: e.json.cartHash });
+    assert(o.status === 200, `cart options → ${o.status} ${o.text.slice(0, 160)}`);
+    const a = await judge.req("POST", `/api/carts/${e.json.id}/approve`, {
+      cart_hash: e.json.cartHash,
+      passkey: { challenge_id: o.json.challengeId, response: device.assert(o.json.options) },
+    });
+    assert(a.status === 200 && a.json.assurance === "PASSKEY_VERIFIED", `cart approve → ${a.status} ${a.text.slice(0, 200)}`);
+    await judge.page(`/permissions/${s.ppid}/carts/${e.json.id}`, "with your passkey");
+  });
+  await step("passkey sign-in works without a password; a foreign passkey is refused", async () => {
+    const fresh = new Client();
+    const o = await fresh.req("POST", "/api/passkeys/sign-in-options");
+    const stranger = new SoftAuthenticator(BASE);
+    const bad = await fresh.req("POST", "/api/passkeys/sign-in", { challenge_id: o.json.challengeId, response: stranger.assert(o.json.options) });
+    assert(bad.status === 401, `foreign passkey → ${bad.status}`);
+    const o2 = await fresh.req("POST", "/api/passkeys/sign-in-options");
+    const ok = await fresh.req("POST", "/api/passkeys/sign-in", { challenge_id: o2.json.challengeId, response: device.assert(o2.json.options) });
+    assert(ok.status === 200 && ok.json.role === "BUYER", `sign-in → ${ok.status} ${ok.text.slice(0, 160)}`);
+    assert((await fresh.req("GET", `/api/permissions/${s.ppid}`)).status === 200, "signed in to a different account");
   });
 
   console.log("\nVerification");

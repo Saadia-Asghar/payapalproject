@@ -32,7 +32,9 @@ async function Account() {
         </Link>
       )}
       {verify}
-      <span className="hidden text-[var(--muted)] sm:inline">{s.user.display_name}</span>
+      <Link href="/account" className="hidden text-[var(--muted)] hover:text-[var(--accent)] sm:inline" title="Account and passkeys">
+        {s.user.display_name}
+      </Link>
       <SignOutButton />
     </div>
   );
