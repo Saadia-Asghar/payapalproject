@@ -14,6 +14,7 @@
     "keys:generate": "node scripts/generate-signing-key.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0",
     "@electric-sql/pglite": "^0.5.14",
     "next": "16.4.4",
     "pg": "^8.23.1",

@@ -121,6 +121,13 @@ export function formValuesFromApproved(t: ApprovedTerms): TermsFormValues {
   };
 }
 
+const SUGGESTABLE = new Set(["product_type", "color", "size", "brand", "condition", "quantity", "max_total", "merchant_ids", "expires_at", "substitutions", "notes"]);
+
+export function aiSuggestedFields(draft: Record<string, unknown> | null): string[] {
+  const raw = draft?.ai_suggested_fields;
+  return Array.isArray(raw) ? [...new Set(raw.filter((f): f is string => typeof f === "string" && SUGGESTABLE.has(f)))].sort() : [];
+}
+
 function sanitizeDraft(draft: unknown): Record<string, unknown> {
   if (typeof draft !== "object" || draft === null || Array.isArray(draft)) {
     throw new ServiceError("BAD_REQUEST", 400, "Draft must be an object.");
@@ -240,6 +247,8 @@ export async function approvePermission(db: Db, input: ApproveInput) {
       user_agent_sha256: input.userAgent ? sha256Hex(input.userAgent) : null,
       consents: CONSENT_KEYS.map((k) => ({ key: k, text: CONSENT_STATEMENTS[k], accepted: true })),
       summary_sha256: sha256Hex(prepared.summary),
+      // Fields the AI pre-filled that the buyer then reviewed and kept (never silent consent).
+      ai_suggested_fields: aiSuggestedFields(p.draft_json),
     };
     const record = {
       type: "permission_approval",

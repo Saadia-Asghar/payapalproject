@@ -15,7 +15,7 @@ payment to a verifiable **Purchase Passport** for disputes.
 | Phase | What works | |
 |---|---|---|
 | 0 Foundation | Next.js 16 + TS, Postgres/PGlite, migrations, sessions, Ed25519 signing, hash-chained audit log | ✅ |
-| 1 Purchase Permission Form | Form → review (plain-English summary + terms fingerprint + 3 consents) → signed immutable version → receipt; versioning; revoke; expiry | ✅ |
+| 1 Purchase Permission Form | Form → review (plain-English summary + terms fingerprint + 3 consents) → signed immutable version → receipt; versioning; revoke; expiry; optional Claude-suggested fields from plain English (badged, never auto-approved, recorded in approval evidence) | ✅ |
 | P0 PayPal sandbox proof | Real Orders v2 create → buyer approval → capture | ⏳ needs sandbox credentials |
 | 2 Catalog + policy engine | Agent picks → server-built cart → ALLOW/REVIEW/BLOCK with "what you allowed vs. what AI selected" → buyer approves the exact cart (rejected if price changed) | ✅ |
 | 3 PayPal checkout | Database side done; PayPal adapter in progress by teammate — [docs/PAYPAL_INTEGRATION.md](docs/PAYPAL_INTEGRATION.md) | 🔶 |
@@ -65,7 +65,7 @@ All documented in [.env.example](.env.example). **Never commit `.env.local` or r
 | `CW_SIGNING_PRIVATE_KEY` | prod | Base64 PKCS#8 Ed25519 PEM from `npm run keys:generate` |
 | `SEED_DEMO_PASSWORD` | no | Demo account password used by `db:seed` |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` / `PAYPAL_API_BASE` / `PAYPAL_WEBHOOK_ID` / `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | Phase 3 | Sandbox app credentials |
-| `AI_PROVIDER` / `AI_API_KEY` | Phase 2, optional | AI only pre-fills fields for buyer review |
+| `ANTHROPIC_API_KEY` / `CW_AI_MODEL` | optional | Claude pre-fills Permission Form fields for buyer review (default model `claude-opus-5-5`); without a key a rule-based parser is used |
 
 ## Deploying (Supabase + Vercel/Render)
 
@@ -95,7 +95,7 @@ Assurance is labelled **application-signed**: it proves the record has not chang
 after an authenticated session approved it. It is *not* cryptographic proof of which human clicked approve —
 the WebAuthn/passkey upgrade is a stretch goal. CartWitness is AP2-*inspired*, not AP2-certified.
 
-More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PHASES.md](docs/PHASES.md)
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PHASES.md](docs/PHASES.md) · [docs/DEPLOY.md](docs/DEPLOY.md) · [docs/DEMO.md](docs/DEMO.md) (demo script + Devpost text) · [docs/PAYPAL_INTEGRATION.md](docs/PAYPAL_INTEGRATION.md)
 
 ## License
 

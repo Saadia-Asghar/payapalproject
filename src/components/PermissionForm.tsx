@@ -4,6 +4,7 @@
 // buyer's own time zone without server/browser hydration differences.
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import type { DraftSuggestion } from "@/lib/permissions/extract";
 import { DELIVERY_REFS, validateTerms, type FieldErrors, type TermsFormValues } from "@/lib/permissions/terms";
 import { apiCall, ApiError } from "./api-client";
 import { btn, fieldError, hint, input, label } from "./ui";
@@ -67,9 +68,14 @@ function initialState(v: Partial<TermsFormValues> | null): FormState {
   };
 }
 
-function toPayload(s: FormState, timeZone: string) {
+/** Form field → the field key used for errors, badges and the approval evidence. */
+const fieldKey = (k: keyof FormState) => (k === "deadline_local" ? "expires_at" : k);
+
+function toPayload(s: FormState, timeZone: string, aiSuggested: string[]) {
   const deadline = s.deadline_local ? new Date(s.deadline_local) : null;
   return {
+    // Which values the AI pre-filled and the buyer kept; recorded with the approval.
+    ai_suggested_fields: aiSuggested,
     request_text: s.request_text,
     product_type: s.product_type,
     color: s.color,
@@ -98,20 +104,66 @@ export default function PermissionForm({ permissionId, policyId, nextVersion, in
   const [errors, setErrors] = useState<FieldErrors>({});
   const [busy, setBusy] = useState<"save" | "review" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [aiFilled, setAiFilled] = useState<string[]>(() => {
+    const prev = (initial as { ai_suggested_fields?: unknown } | null)?.ai_suggested_fields;
+    return Array.isArray(prev) ? prev.filter((x): x is string => typeof x === "string") : [];
+  });
+  const [suggesting, setSuggesting] = useState(false);
+  const [aiNote, setAiNote] = useState<string | null>(null);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setS((prev) => ({ ...prev, [key]: value }));
     setErrors((prev) => {
       const next = { ...prev };
-      delete next[key === "deadline_local" ? "expires_at" : key];
+      delete next[fieldKey(key)];
       return next;
     });
+    // Once the buyer edits a field it is their own value, not an AI suggestion.
+    setAiFilled((prev) => prev.filter((f) => f !== fieldKey(key)));
   };
+
+  async function suggest() {
+    setSuggesting(true);
+    setAiNote(null);
+    try {
+      const today = toLocalInput(new Date()).slice(0, 10);
+      const r = await apiCall<{ source: "CLAUDE" | "RULES"; suggestion: DraftSuggestion; notice?: string }>("/api/permissions/draft", "POST", {
+        request_text: s.request_text,
+        today,
+      });
+      const g = r.suggestion;
+      const next: Partial<FormState> = {};
+      if (g.product_type) next.product_type = g.product_type;
+      if (g.color) next.color = g.color;
+      if (g.size) next.size = g.size;
+      if (g.brand) next.brand = g.brand;
+      if (g.condition) next.condition = g.condition;
+      if (g.quantity) next.quantity = String(g.quantity);
+      if (g.max_total) next.max_total = g.max_total;
+      if (g.merchant_ids?.length) next.merchant_ids = g.merchant_ids;
+      if (g.deadline_date) next.deadline_local = `${g.deadline_date}T23:59`;
+      if (g.substitutions) next.substitutions = g.substitutions;
+      if (g.notes) next.notes = g.notes;
+      const keys = (Object.keys(next) as (keyof FormState)[]).map(fieldKey);
+      setS((prev) => ({ ...prev, ...next }));
+      setAiFilled(keys);
+      setErrors({});
+      const by = r.source === "CLAUDE" ? "Claude" : "a rule-based parser";
+      setAiNote(
+        keys.length
+          ? `${keys.length} field(s) pre-filled by ${by} and marked below. Check each one — nothing is approved until you review and approve.${r.notice ? ` ${r.notice}` : ""}`
+          : `No fields could be suggested from that text. Please fill the form below.${r.notice ? ` ${r.notice}` : ""}`,
+      );
+    } catch (e) {
+      setAiNote(e instanceof ApiError ? e.message : "Suggestions are unavailable right now.");
+    }
+    setSuggesting(false);
+  }
 
   async function save(goToReview: boolean) {
     setBusy(goToReview ? "review" : "save");
     setNotice(null);
-    const payload = toPayload(s, timeZone);
+    const payload = toPayload(s, timeZone, aiFilled);
     const local = validateTerms(payload);
     try {
       // Always save so the buyer never loses work; the server re-validates authoritatively.
@@ -135,12 +187,16 @@ export default function PermissionForm({ permissionId, policyId, nextVersion, in
 
   const err = (k: string) => errors[k];
   const aria = (k: string) => ({ "aria-invalid": !!err(k), "aria-describedby": err(k) ? `${k}-error` : undefined });
-  const errorText = (k: string) =>
-    err(k) ? (
-      <p id={`${k}-error`} className={fieldError}>
-        {err(k)}
-      </p>
-    ) : null;
+  const errorText = (k: string) => (
+    <>
+      {aiFilled.includes(k) && <p className="mt-1 inline-flex rounded bg-violet-50 px-1.5 py-0.5 text-[11px] font-semibold text-violet-800">AI-suggested · please check</p>}
+      {err(k) && (
+        <p id={`${k}-error`} className={fieldError}>
+          {err(k)}
+        </p>
+      )}
+    </>
+  );
 
   return (
     <form
@@ -165,9 +221,17 @@ export default function PermissionForm({ permissionId, policyId, nextVersion, in
           value={s.request_text}
           onChange={(e) => set("request_text", e.target.value)}
         />
-        <p className={hint}>
-          Only the structured fields below are enforced. AI-suggested values arrive in a later phase and will always need your review.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <button type="button" className={btn.secondary} disabled={suggesting || s.request_text.trim().length < 5} onClick={() => void suggest()}>
+            {suggesting ? "Reading your request…" : "✨ Suggest fields from my request"}
+          </button>
+          <span className={hint}>Only the structured fields below are enforced. Suggestions are never approved for you.</span>
+        </div>
+        {aiNote && (
+          <p role="status" className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-sm text-violet-900">
+            {aiNote}
+          </p>
+        )}
       </Section>
 
       <Section title="What can your AI buy?">
