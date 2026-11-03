@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Suspense } from "react";
 import { CartApproveButton } from "@/components/CartApproveButton";
+import { PayPalCheckout } from "@/components/PayPalCheckout";
 import { btn, card } from "@/components/ui";
 import { RuleStatusIcon, VERDICT_STYLE } from "@/components/verdict";
 import { formatDeadline } from "@/lib/permissions/summary";
@@ -119,13 +120,20 @@ async function CartCheck({ params }: { params: Promise<{ id: string; attemptId: 
               </Link>
             ) : (
               <>
-                {/* Phase 3 (PayPal adapter) replaces this button; see docs/PAYPAL_INTEGRATION.md */}
-                <button type="button" className={btn.primary} disabled title="PayPal sandbox checkout is being integrated (Phase 3)">
-                  Continue to PayPal
-                </button>
-                <p className="text-xs text-[var(--muted)]">
-                  {payment ? `Checkout ${payment.reconciliation_key}: ${payment.status}.` : "PayPal sandbox checkout is being integrated."} No payment has been taken.
-                </p>
+                {d.stillCurrent && d.permissionUsable.ok ? (
+                  <PayPalCheckout attemptId={a.id} clientId={process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || null} total={cart.total} />
+                ) : (
+                  <p className="text-sm text-amber-800">
+                    {d.permissionUsable.ok
+                      ? "The seller changed this cart since you approved it, so it can't be paid. Run a new check."
+                      : `This cart can no longer be paid: ${d.permissionUsable.reason}`}
+                  </p>
+                )}
+                {payment && (
+                  <p className="text-xs text-[var(--muted)]">
+                    Checkout {payment.reconciliation_key}: {payment.status}.
+                  </p>
+                )}
               </>
             )}
           </div>

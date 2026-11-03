@@ -25,7 +25,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <SiteHeader />
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>
         <footer className="border-t border-[var(--line)] py-6 text-center text-xs text-[var(--muted)]">
-          CartWitness · PayPal AI Hackathon 2026 · Sandbox only — no real money moves. Records are tamper-evident, not a legal guarantee.
+          CartWitness · PayPal AI Hackathon 2026 · Sandbox only — no real money moves. Records are tamper-evident, not a legal guarantee. · <a href="/setup" className="underline">Setup status</a>
         </footer>
       </body>
     </html>

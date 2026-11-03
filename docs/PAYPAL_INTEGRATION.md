@@ -1,111 +1,68 @@
-# Phase 3 — PayPal integration guide (for the PayPal teammate)
+# PayPal integration (Phase 3)
 
-Everything around PayPal is already built and tested: the policy gate, idempotency, single-use
-consumption, the Purchase Passport, verification and dispute packets. The PayPal adapter only
-has to **talk to PayPal** and call the functions in
-[`src/server/services/payments.ts`](../src/server/services/payments.ts). It must never write
-payment tables directly.
+PayPal sandbox checkout is implemented and tested against a mocked PayPal server. It switches on
+as soon as sandbox keys are added; until then the app says so and takes no payment.
 
-```
-Buyer approves exact cart (done)                       CartWitness DB side (done)
-        │
-        ▼
-POST /api/checkout/create {attempt_id}     ──► reserveCheckout()      policy gate + reservation
-        │  PayPal POST /v2/checkout/orders  ◄──   returns amount, breakdown, custom_id, request id
-        ▼
-                                           ──► attachPayPalOrder()    stores PayPal order id
-Buyer approves in PayPal popup (JS SDK)
-        ▼
-POST /api/checkout/{paymentOrderId}/capture ──► assertCapturable()    re-checks permission
-        │  PayPal POST /v2/checkout/orders/{id}/capture
-        ▼
-                                           ──► recordCapture()        verifies + consumes + issues Passport
-        ▼
-redirect to /passports/{passportId}
-```
+## Turn it on
 
-## What you build (your files)
+1. developer.paypal.com → **Apps & Credentials → Sandbox → Create App**.
+2. Put the values in `.env.local` (local) or your host's environment:
 
-| File | Purpose |
+| Variable | Value |
 |---|---|
-| `src/server/paypal/client.ts` | OAuth2 token (client credentials, cached until expiry), `createOrder`, `captureOrder`, `getOrder`, `verifyWebhookSignature`. Base URL from `PAYPAL_API_BASE`. Server-only. |
-| `src/app/api/checkout/create/route.ts` | Body `{ attempt_id }`. `requireUser("BUYER")` → `reserveCheckout` → if `paypalOrderId` is already set return it, else `createOrder` → `attachPayPalOrder` → return `{ id: paypalOrderId, paymentOrderId }`. |
-| `src/app/api/checkout/[paymentOrderId]/capture/route.ts` | `requireUser("BUYER")`, check the payment order's `user_id` is the user → `assertCapturable` → `captureOrder` → `recordCapture` → return `{ passportId }`. |
-| `src/app/api/paypal/webhooks/route.ts` | Verify the signature with `PAYPAL_WEBHOOK_ID`; dedupe in `webhook_events`; on `PAYMENT.CAPTURE.COMPLETED` call `getOrder`, then `recordCapture` (idempotent). Reject unverified events with no state change. |
-| `src/components/PayPalCheckout.tsx` | PayPal JS SDK Buttons (`NEXT_PUBLIC_PAYPAL_CLIENT_ID`, `currency=USD`, `intent=capture`). `createOrder` → our create route; `onApprove` → our capture route → `router.push('/passports/' + passportId)`; `onCancel`/`onError` → show a message. |
-| Cart page | Replace the disabled “Continue to PayPal” button in `src/app/permissions/[id]/carts/[attemptId]/page.tsx` (marked with a comment) with `<PayPalCheckout attemptId=… />`. |
+| `PAYPAL_CLIENT_ID` | the app's Client ID |
+| `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | the same Client ID (used by the PayPal buttons in the browser) |
+| `PAYPAL_CLIENT_SECRET` | the app's Secret — server only, never commit |
+| `PAYPAL_API_BASE` | `https://api-m.sandbox.paypal.com` (default) |
+| `PAYPAL_WEBHOOK_ID` | optional — see Webhooks below |
 
-All routes should use the existing `api()` wrapper from `src/server/http.ts` (same-origin check,
-uniform errors) and `z.strictObject` request schemas, like the other routes.
+3. Restart the server. `/setup` shows **PayPal sandbox checkout ✓** when ready.
+4. Pay with a **sandbox personal account** (Testing Tools → Sandbox Accounts), never a real one.
 
-## Exact PayPal calls
+## How the flow works
 
-**Create order** — headers `Authorization: Bearer …` and `PayPal-Request-Id: reservation.paypalRequestId`.
-
-```json
-{
-  "intent": "CAPTURE",
-  "purchase_units": [{
-    "custom_id": "<reservation.reconciliationKey>",
-    "amount": {
-      "currency_code": "<reservation.currency>",
-      "value": "<reservation.amount>",
-      "breakdown": {
-        "item_total": { "currency_code": "USD", "value": "<breakdown.itemTotal>" },
-        "shipping":   { "currency_code": "USD", "value": "<breakdown.shipping>" },
-        "tax_total":  { "currency_code": "USD", "value": "<breakdown.tax>" }
-      }
-    },
-    "items": [{
-      "name": "<item.name>", "sku": "<item.sku>", "quantity": "<item.quantity>",
-      "unit_amount": { "currency_code": "USD", "value": "<item.unitPrice>" }
-    }]
-  }]
-}
+```
+Buyer approves exact cart ─► Pay with PayPal (JS SDK button)
+  createOrder ─► POST /api/checkout/create        reserveCheckout(): policy gate + reservation
+                    └─ PayPal POST /v2/checkout/orders  (PayPal-Request-Id = idempotency key,
+                                                         custom_id = CW-CASE-xxxxx, trusted amounts)
+  buyer approves in the PayPal window
+  onApprove  ─► POST /api/checkout/{id}/capture    assertCapturable(): permission re-checked
+                    └─ PayPal POST /v2/checkout/orders/{id}/capture
+                    └─ recordCapture(): COMPLETED + exact amount/currency/order, consume permission,
+                                        issue Purchase Passport (atomic)
+  ─► /passports/CW-PP-xxxxx
 ```
 
-Use only values returned by `reserveCheckout()`, never amounts from the browser.
-
-**Capture** — `POST /v2/checkout/orders/{paypalOrderId}/capture` with header
-`PayPal-Request-Id: <paypalRequestId>-capture`. From the response take
-`purchase_units[0].payments.captures[0]` and call:
-
-```ts
-await recordCapture(db, {
-  paymentOrderId,
-  paypalOrderId: response.id,
-  captureId: capture.id,
-  captureStatus: capture.status,            // must be "COMPLETED"
-  amount: capture.amount.value,             // must equal the reserved amount exactly, e.g. "120.00"
-  currency: capture.amount.currency_code,
-  rawResponse: response,                    // only its SHA-256 is stored
-});
-```
-
-`recordCapture` refuses (and stores nothing) on a non-COMPLETED status, an amount, currency or
-order mismatch, or a revoked, expired or already-used permission. It is idempotent for the same capture id.
-
-## Error handling
-
-| Situation | Call |
+| File | Role |
 |---|---|
-| Buyer closes the PayPal popup | `closeCheckout({ status: "CANCELLED", reason })` |
-| PayPal returns a hard error on create/capture | `closeCheckout({ status: "FAILED", reason })` |
-| Capture returns `PENDING` | Don't close; let the webhook or `getOrder` reconcile later |
-| `ServiceError` from our functions | Return it as-is (the `api()` wrapper does this) |
+| `src/server/paypal/client.ts` | OAuth token (cached), create / capture / get order, webhook signature verification |
+| `src/server/services/checkout.ts` | Orchestration, ownership checks, PayPal error mapping, webhook reconciliation |
+| `src/server/services/payments.ts` | The only code that changes payment state (policy gate, idempotency, single use) |
+| `src/app/api/checkout/create`, `…/[paymentOrderId]/capture`, `…/cancel` | Buyer routes (session + same-origin) |
+| `src/app/api/paypal/webhooks` | PayPal → server; authenticity from PayPal signature verification only |
+| `src/components/PayPalCheckout.tsx` | PayPal buttons; shows "not configured" without keys |
 
-## Environment variables (already in `.env.example`)
+## Guarantees (covered by `tests/checkout.test.ts`)
 
-`PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_API_BASE=https://api-m.sandbox.paypal.com`,
-`PAYPAL_WEBHOOK_ID`, `NEXT_PUBLIC_PAYPAL_CLIENT_ID`. Never commit values.
+- Double-clicking Pay or retrying never creates a second PayPal order or capture.
+- A capture whose amount, currency or order differs from the reservation is refused; no Passport.
+- Revoking or expiring the permission between PayPal approval and capture blocks the capture.
+- A lost capture response is reconciled (`ORDER_ALREADY_CAPTURED` → read the order → record).
+- Declines and pending captures are reported honestly; closing the PayPal window charges nothing,
+  and the buyer can click Pay again.
+- Another user cannot capture or cancel someone else's checkout.
+- A webhook with a bad signature is rejected with no state change; verified webhooks are deduplicated
+  and reconciled by re-reading the order from PayPal (the webhook body is never trusted).
 
-## Done when
+## Webhooks (optional)
 
-- [ ] A real sandbox buyer completes checkout and lands on a Passport that verifies.
-- [ ] Paying twice or retrying capture creates no second order or capture.
-- [ ] Revoking the permission between create and capture blocks the capture.
-- [ ] A webhook with a bad signature changes nothing.
-- [ ] The full flow is recorded for the demo video.
+Captures are confirmed synchronously, so webhooks only matter if the buyer's browser disappears
+mid-capture. To enable: deploy (public HTTPS), add a webhook on the sandbox app pointing to
+`https://<your-domain>/api/paypal/webhooks` with events **PAYMENT.CAPTURE.COMPLETED** and
+**CHECKOUT.ORDER.COMPLETED**, and put its id in `PAYPAL_WEBHOOK_ID`.
 
-Tests for the database side are in `tests/passports.test.ts` (they use fixed fake PayPal IDs as
-test doubles). Please add route-level tests with a mocked PayPal HTTP client.
+## Not done
+
+- No refunds UI (a merchant refund via `/v2/payments/captures/{id}/refund` is a natural next step).
+- Not yet run against the live PayPal sandbox — do the checklist in `docs/DEPLOY.md` once keys exist.

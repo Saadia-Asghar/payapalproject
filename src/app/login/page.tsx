@@ -15,7 +15,7 @@ export default function LoginPage() {
         </Suspense>
       </div>
       <p className="text-xs text-[var(--muted)]">
-        Demo accounts are created by <code className="font-mono">npm run db:seed</code>; see the README.
+        Demo accounts are created by <code className="font-mono">npm run setup</code> (the password is in .env.local); see the README.
       </p>
     </div>
   );

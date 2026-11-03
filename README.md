@@ -16,13 +16,12 @@ payment to a verifiable **Purchase Passport** for disputes.
 |---|---|---|
 | 0 Foundation | Next.js 16 + TS, Postgres/PGlite, migrations, sessions, Ed25519 signing, hash-chained audit log | ✅ |
 | 1 Purchase Permission Form | Form → review (plain-English summary + terms fingerprint + 3 consents) → signed immutable version → receipt; versioning; revoke; expiry; optional Claude-suggested fields from plain English (badged, never auto-approved, recorded in approval evidence) | ✅ |
-| P0 PayPal sandbox proof | Real Orders v2 create → buyer approval → capture | ⏳ needs sandbox credentials |
 | 2 Catalog + policy engine | Agent picks → server-built cart → ALLOW/REVIEW/BLOCK with "what you allowed vs. what AI selected" → buyer approves the exact cart (rejected if price changed) | ✅ |
-| 3 PayPal checkout | Database side done; PayPal adapter in progress by teammate — [docs/PAYPAL_INTEGRATION.md](docs/PAYPAL_INTEGRATION.md) | 🔶 |
+| 3 PayPal checkout | Policy-gated Orders v2 create → PayPal buyer approval → server capture → Passport; idempotent, revocation-safe, verified webhooks | ✅ code + mocked tests · ⏳ live sandbox run once keys are added |
 | 4 Purchase Passport | Signed proof bundle on verified capture, owner page + JSON download, public redacted `/verify`, paste-a-bundle tamper check | ✅ |
 | 5 Merchant workspace | Store-scoped cart checks, SAMPLE disputes with grounded evidence packets (provided vs missing), reviewer step, JSON export | ✅ |
 
-Nothing in this repo simulates a payment. Until Phase 3 lands there is **no** PayPal call at all, and the UI says so.
+Nothing in this repo simulates a payment. Without PayPal keys the checkout button is disabled and says why.
 
 ## Quick start (no external services needed)
 
@@ -30,13 +29,15 @@ Requirements: **Node.js ≥ 22.18** (runs the TypeScript scripts natively) and n
 
 ```bash
 npm install
-cp .env.example .env.local        # optional for local dev; every value may stay empty
-SEED_DEMO_PASSWORD='choose-a-local-password' npm run db:seed
+npm run setup      # creates .env.local, a signing key, the database and demo accounts
 npm run dev
 ```
 
-Open http://localhost:3000 and sign in as `buyer@demo.cartwitness.test` with the password you chose.
-If you omit `SEED_DEMO_PASSWORD`, the seed script generates one and prints it once.
+Open http://localhost:3000 and sign in as `buyer@demo.cartwitness.test` (or `merchant@demo.cartwitness.test`).
+The password is `SEED_DEMO_PASSWORD` in `.env.local`. Visit **/setup** to see which keys are still missing.
+
+Add keys later in `.env.local` and restart: PayPal sandbox keys turn on checkout ([docs/PAYPAL_INTEGRATION.md](docs/PAYPAL_INTEGRATION.md));
+`ANTHROPIC_API_KEY` turns on Claude form suggestions. Without them the app runs and says what is unavailable.
 
 With `DATABASE_URL` empty, an embedded PostgreSQL (PGlite) is created in `.data/` and migrated
 automatically, and a development signing key is generated in `.data/dev-signing-key.pem`.
@@ -46,6 +47,7 @@ automatically, and a development signing key is generated in `.data/dev-signing-
 
 | Command | Purpose |
 |---|---|
+| `npm run setup` | First run: `.env.local`, signing key, database, demo accounts |
 | `npm run dev` | Dev server on :3000 |
 | `npm test` | Unit + integration tests (in-memory Postgres) |
 | `npm run typecheck` / `npm run lint` | Static checks (run `npx next typegen` once on a fresh clone) |
