@@ -47,6 +47,8 @@ class Client {
     const m = set && /cw_session=([^;]*)/.exec(set);
     if (m) this.cookie = m[1] ? `cw_session=${m[1]}` : "";
     const text = await res.text();
+    // Response JSON is loosely typed test data; each step asserts the fields it relies on.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let json: Record<string, any> = {};
     try {
       json = JSON.parse(text);
