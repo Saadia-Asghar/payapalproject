@@ -3,7 +3,7 @@ import { btn, card } from "@/components/ui";
 
 const steps = [
   { n: "1", title: "You set the rules", body: "Fill out a short Purchase Permission Form: product, size, sellers, a maximum total including fees, and a deadline." },
-  { n: "2", title: "You approve the exact terms", body: "A plain-English summary and a fingerprint of the terms are shown. Nothing is active until you tick three confirmations and approve." },
+  { n: "2", title: "You approve the exact terms", body: "A plain-English summary and a fingerprint of the terms are shown. You approve with your passkey, so your own device signs exactly what you allowed." },
   { n: "3", title: "Code checks every cart", body: "The AI may suggest products, but the server compares the final cart with the version you approved — and blocks anything outside it." },
   { n: "4", title: "PayPal handles payment", body: "You still approve checkout in PayPal. The payment IDs are linked to your approval in a verifiable Purchase Passport." },
 ];
@@ -21,11 +21,14 @@ export default function Home() {
           Evidence preserves what happened.
         </p>
         <div className="flex flex-wrap gap-3">
-          <Link href="/permissions" className={btn.primary}>
-            Create a purchase permission
+          <Link href="/signup" className={btn.primary}>
+            Create a free account
           </Link>
           <Link href="/login" className={btn.secondary}>
-            Sign in
+            Try the one-click demo
+          </Link>
+          <Link href="/verify" className={btn.ghost}>
+            Verify a Purchase Passport →
           </Link>
         </div>
       </section>

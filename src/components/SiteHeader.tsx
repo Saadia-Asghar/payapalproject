@@ -14,8 +14,11 @@ async function Account() {
     return (
       <div className="flex items-center gap-4 text-sm">
         {verify}
-        <Link href="/login" className="font-semibold text-[var(--accent)] hover:underline">
+        <Link href="/login" className="font-medium text-[var(--ink)] hover:text-[var(--accent)]">
           Sign in
+        </Link>
+        <Link href="/signup" className="rounded-lg bg-[var(--accent)] px-3 py-1.5 font-semibold text-white hover:bg-[var(--accent-strong)]">
+          Sign up
         </Link>
       </div>
     );

@@ -22,6 +22,7 @@ payment to a verifiable **Purchase Passport** for disputes.
 | 5 Merchant workspace | Store-scoped cart checks, SAMPLE disputes with grounded evidence packets (provided vs missing), reviewer step, JSON export | ✅ |
 | 6 Buyer-bound approval | **Passkeys (WebAuthn)**: the buyer's device signs a challenge derived from the exact terms hash and the exact cart hash; proofs embedded in records and re-verified in the Passport; no downgrade once a passkey exists; passkey sign-in | ✅ |
 | Judge access | **One-click demo**: "Try as buyer" (fresh private account) / "Try as merchant" on the sign-in page | ✅ |
+| Accounts | **Sign-up** (email + password, scrypt, password rules, duplicate/rate-limit protection) → welcome checklist → passkey; change password (ends other sessions), sign out everywhere else, guided first permission | ✅ · no email verification or password reset (no mail provider) — use a passkey as a second way in |
 
 Nothing in this repo simulates a payment. Without PayPal keys the checkout button is disabled and says why.
 
@@ -35,7 +36,8 @@ npm run setup      # creates .env.local, a signing key, the database and demo ac
 npm run dev
 ```
 
-Open http://localhost:3000/login and click **Try as buyer** or **Try as merchant** — no password needed.
+Open http://localhost:3000 and **Sign up** for your own buyer account, or go to /login and click
+**Try as buyer** / **Try as merchant** — no password needed.
 The seeded accounts `buyer@demo.cartwitness.test` / `merchant@demo.cartwitness.test` also work with `SEED_DEMO_PASSWORD`
 from `.env.local`. Visit **/setup** to see which keys are still missing.
 

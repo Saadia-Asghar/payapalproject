@@ -2,9 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { NewPermissionButton } from "@/components/NewPermissionButton";
-import { badge, card, statusBadge } from "@/components/ui";
+import { badge, btn, card, statusBadge } from "@/components/ui";
 import { formatMoney } from "@/lib/permissions/summary";
 import { getSessionUser } from "@/server/auth/session";
+import { hasPasskey } from "@/server/auth/webauthn";
 import { getDb } from "@/server/db/client";
 import { listPermissions } from "@/server/services/permissions";
 
@@ -14,12 +15,34 @@ async function PermissionList() {
   const rows = await listPermissions(await getDb(), session.user.id);
 
   if (!rows.length) {
+    const passkey = await hasPasskey(await getDb(), session.user.id);
+    const steps = [
+      ["Describe what you want", "Type it in plain English (e.g. “white running shoes, size 10, under $150”) and let the form fill in — then check every field."],
+      ["Approve the exact terms", passkey ? "Your passkey signs a fingerprint of exactly what you allowed." : "Add a passkey first so your device signs exactly what you allowed."],
+      ["Let the agent shop", "Each cart it proposes is checked rule by rule. Anything outside your terms is blocked before any payment."],
+      ["Pay with PayPal, keep the proof", "Approve the exact cart, pay in the PayPal sandbox, and get a verifiable Purchase Passport."],
+    ];
     return (
-      <div className={`${card} text-center`}>
-        <h2 className="font-semibold">No permissions yet</h2>
-        <p className="mt-1 text-sm text-[var(--muted)]">Create one to tell your AI shopping assistant exactly what it may buy.</p>
-        <div className="mt-5">
+      <div className={card}>
+        <h2 className="text-lg font-semibold">Get started in four steps</h2>
+        <ol className="mt-4 grid gap-4 sm:grid-cols-2">
+          {steps.map(([title, body], i) => (
+            <li key={title} className="flex gap-3">
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent)]">{i + 1}</span>
+              <span>
+                <span className="block text-sm font-semibold">{title}</span>
+                <span className="block text-sm text-[var(--muted)]">{body}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+        <div className="mt-6 flex flex-wrap items-center gap-3">
           <NewPermissionButton label="Create your first permission" />
+          {!passkey && (
+            <Link href="/account" className={btn.secondary}>
+              🔐 Add a passkey first
+            </Link>
+          )}
         </div>
       </div>
     );

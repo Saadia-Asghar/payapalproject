@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { DemoSignIn, LoginForm, PasskeySignIn } from "@/components/LoginForm";
 import { card } from "@/components/ui";
@@ -24,6 +25,12 @@ export default function LoginPage() {
           <LoginForm />
         </section>
       </Suspense>
+      <p className="text-sm text-[var(--muted)]">
+        New here?{" "}
+        <Link href="/signup" className="font-semibold text-[var(--accent)] hover:underline">
+          Create an account
+        </Link>
+      </p>
       <p className="text-xs text-[var(--muted)]">
         Seeded accounts: <code className="font-mono">buyer@demo.cartwitness.test</code> and{" "}
         <code className="font-mono">merchant@demo.cartwitness.test</code> (password in the submission&apos;s testing instructions, or{" "}

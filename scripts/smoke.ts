@@ -255,6 +255,40 @@ async function main() {
     await merchant.page(`/merchant/disputes/${s.caseId}`, "SAMPLE CASE");
   });
 
+  console.log("\nNew user: sign-up, sign-in, account security");
+  const newbie = new Client();
+  const email = `smoke-${Date.now().toString(36)}@example.com`;
+  const pw1 = "smoke test passphrase one";
+  const pw2 = "smoke test passphrase two";
+  await step("sign-up page loads; a new buyer account is created and signed in", async () => {
+    await anon.page("/signup", "Create your account");
+    const weak = await newbie.req("POST", "/api/auth/signup", { email, display_name: "Smoke User", password: "short" });
+    assert(weak.status === 422 && weak.json.error?.details?.password, `weak password → ${weak.status}`);
+    const r = await newbie.req("POST", "/api/auth/signup", { email, display_name: "Smoke User", password: pw1 });
+    assert(r.status === 200 && r.json.role === "BUYER", `sign-up → ${r.status} ${r.text.slice(0, 160)}`);
+    await newbie.page("/account?welcome=1", "Welcome");
+    await newbie.page("/permissions", "Get started in four steps");
+    const dup = await new Client().req("POST", "/api/auth/signup", { email: email.toUpperCase(), display_name: "Again", password: pw1 });
+    assert(dup.status === 409 && dup.json.error?.code === "EMAIL_TAKEN", `duplicate → ${dup.status}`);
+  });
+  await step("the new user signs out and back in with email and password", async () => {
+    await newbie.req("POST", "/api/auth/logout");
+    assert((await newbie.req("GET", "/api/permissions")).status === 401, "still signed in after logout");
+    const r = await newbie.req("POST", "/api/auth/login", { email, password: pw1 });
+    assert(r.status === 200 && r.json.role === "BUYER", `login → ${r.status}`);
+  });
+  await step("password change needs the current password and ends other sessions", async () => {
+    const other = new Client();
+    assert((await other.req("POST", "/api/auth/login", { email, password: pw1 })).status === 200, "second session login failed");
+    const bad = await newbie.req("POST", "/api/account/password", { current: "not my password", next: pw2 });
+    assert(bad.status === 401, `wrong current → ${bad.status}`);
+    const ok = await newbie.req("POST", "/api/account/password", { current: pw1, next: pw2 });
+    assert(ok.status === 200 && ok.json.otherSessionsEnded >= 1, `change → ${ok.status} ${ok.text.slice(0, 160)}`);
+    assert((await other.req("GET", "/api/permissions")).status === 401, "other session survived the password change");
+    assert((await new Client().req("POST", "/api/auth/login", { email, password: pw1 })).status === 401, "old password still works");
+    assert((await new Client().req("POST", "/api/auth/login", { email, password: pw2 })).status === 200, "new password does not work");
+  });
+
   console.log("\nOne-click demo and passkeys");
   const judge = new Client();
   const device = new SoftAuthenticator(BASE);
