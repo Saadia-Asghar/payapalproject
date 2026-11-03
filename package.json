@@ -12,7 +12,8 @@
     "test": "vitest run",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.ts",
     "db:seed": "node --env-file-if-exists=.env.local scripts/seed.ts",
-    "keys:generate": "node scripts/generate-signing-key.ts"
+    "keys:generate": "node scripts/generate-signing-key.ts",
+    "smoke": "node scripts/smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.4.0",
