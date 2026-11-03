@@ -49,6 +49,7 @@ automatically, and a development signing key is generated in `.data/dev-signing-
 |---|---|
 | `npm run setup` | First run: `.env.local`, signing key, database, demo accounts |
 | `npm run dev` | Dev server on :3000 |
+| `npm run smoke` | End-to-end HTTP check of every API and page against a running server (`BASE_URL`) |
 | `npm test` | Unit + integration tests (in-memory Postgres) |
 | `npm run typecheck` / `npm run lint` | Static checks (run `npx next typegen` once on a fresh clone) |
 | `npm run build` | Production build |
@@ -69,14 +70,11 @@ All documented in [.env.example](.env.example). **Never commit `.env.local` or r
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` / `PAYPAL_API_BASE` / `PAYPAL_WEBHOOK_ID` / `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | Phase 3 | Sandbox app credentials |
 | `ANTHROPIC_API_KEY` / `CW_AI_MODEL` | optional | Claude pre-fills Permission Form fields for buyer review (default model `claude-opus-5-5`); without a key a rule-based parser is used |
 
-## Deploying (Supabase + Vercel/Render)
+## Deploying (Vercel + Supabase)
 
-1. Create a Supabase project, copy its Postgres connection string into `DATABASE_URL`.
-2. `npm run keys:generate` → set `CW_SIGNING_PRIVATE_KEY` on the host (keep it secret).
-3. `npm run db:migrate` and `npm run db:seed` with those env vars set.
-4. Deploy with the same env vars.
-
-Full guide with smoke-test checklist: [docs/DEPLOY.md](docs/DEPLOY.md). Production refuses to run without `DATABASE_URL`.
+Set `DATABASE_URL`, `CW_SIGNING_PRIVATE_KEY` and `SEED_DEMO_PASSWORD` (plus PayPal keys) in Vercel and deploy the `final` branch —
+the build applies migrations and creates the demo accounts automatically. Step-by-step: [docs/DEPLOY.md](docs/DEPLOY.md).
+Check a deployment end to end with `BASE_URL=https://<domain> npm run smoke`.
 
 ## Branches
 
